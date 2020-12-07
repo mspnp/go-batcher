@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// TODO: target gets screwed up after retries
-// 5000 without throttle
-
 type Watcher struct {
 	operations   []*Operation
 	maxAttempts  uint32
@@ -89,6 +86,7 @@ type Batcher struct {
 	stop             chan bool
 	pause            chan bool
 	shutdown         sync.WaitGroup
+	targetMutex      sync.RWMutex
 	target           uint32
 }
 
@@ -179,7 +177,7 @@ func (r *Batcher) Enqueue(op *Operation) error {
 	}
 
 	// increment the target
-	atomic.AddUint32(&r.target, op.cost)
+	r.incTarget(int(op.cost))
 
 	// put into the buffer
 	r.buffer <- op
@@ -202,6 +200,30 @@ func (r *Batcher) OperatorsInBuffer() uint32 {
 
 func (r *Batcher) NeedsCapacity() uint32 {
 	return atomic.LoadUint32(&r.target)
+}
+
+func (r *Batcher) getTarget() uint32 {
+	r.targetMutex.RLock()
+	defer r.targetMutex.RUnlock()
+	return r.target
+}
+
+func (r *Batcher) setTarget(val uint32) {
+	r.targetMutex.Lock()
+	defer r.targetMutex.Unlock()
+	r.target = val
+}
+
+func (r *Batcher) incTarget(val int) {
+	r.targetMutex.Lock()
+	defer r.targetMutex.Unlock()
+	if val < 0 && r.target >= uint32(-val) {
+		r.target += uint32(val)
+	} else if val < 0 {
+		r.target = 0
+	} else if val > 0 {
+		r.target += uint32(val)
+	} // else is val=0, do nothing
 }
 
 func (r *Batcher) Start() *Batcher {
@@ -237,11 +259,11 @@ func (r *Batcher) Start() *Batcher {
 				}
 
 				// decrement target
-				var total uint32 = 0
+				var total int = 0
 				for _, op := range operations {
-					total += op.cost
+					total += int(op.cost)
 				}
-				atomic.AddUint32(&r.target, -total)
+				r.incTarget(-total)
 
 			}()
 		}
@@ -280,6 +302,7 @@ func (r *Batcher) Start() *Batcher {
 
 			case <-r.pause:
 				// pause; typically this is requested because there is too much pressure on the datastore
+				// TODO: make this configurable
 				r.emit("pause", 500, nil)
 				time.Sleep(500 * time.Millisecond)
 
@@ -343,7 +366,7 @@ func (r *Batcher) Start() *Batcher {
 
 				// implement a failsafe against requesting a target without having any operations
 				if time.Since(lastFlushWithRecords) > r.maxOperationTime && r.NeedsCapacity() > 0 {
-					atomic.StoreUint32(&r.target, 0)
+					r.setTarget(0)
 				}
 
 			}
