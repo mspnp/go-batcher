@@ -11,9 +11,10 @@ type eventer struct {
 	listeners     map[uuid.UUID]func(event string, val int, msg *string)
 }
 
-type EventEnabled interface {
-	AddListener(fn func(event string, val int64, msg *string)) uuid.UUID
+type ieventer interface {
+	AddListener(fn func(event string, val int, msg *string)) uuid.UUID
 	RemoveListener(id uuid.UUID)
+	emit(event string, val int, msg *string)
 }
 
 func (r *eventer) AddListener(fn func(event string, val int, msg *string)) uuid.UUID {

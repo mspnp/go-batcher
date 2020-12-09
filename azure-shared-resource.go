@@ -1,64 +1,89 @@
 package batcher
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
 	"math/rand"
-	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/google/uuid"
 )
 
+type UndefinedLeaseManagerError struct{}
+
+func (e UndefinedLeaseManagerError) Error() string {
+	return "a lease manager must be assigned."
+}
+
+type UndefinedMaxCapacityError struct{}
+
+func (e UndefinedMaxCapacityError) Error() string {
+	return "you must define a MaxCapacity."
+}
+
+type PartitionsOutOfRangeError struct {
+	MaxCapacity    uint32
+	Factor         uint32
+	PartitionCount int
+}
+
+func (e PartitionsOutOfRangeError) Error() string {
+	return "you must have between 1 and 500 partitions."
+}
+
 type AzureSharedResource struct {
 	eventer
-	accountName      *string
-	masterKey        *string
-	containerName    *string
+
+	// configuration items that should not change after Provision()
 	factor           uint32
 	maxCapacity      uint32
 	maxInterval      uint32
 	reservedCapacity uint32
-	capacity         uint32
-	container        azblob.ContainerURL
-	partitions       []*string
-	partlock         sync.RWMutex
-	stop             chan bool
-	shutdown         sync.WaitGroup
-	target           uint32
+
+	// used for internal operations
+	leaseManager leaseManager
+	stop         chan bool
+	shutdown     sync.WaitGroup
+
+	// capacity and target needs to be threadsafe and changes frequently
+	capacity uint32
+	target   uint32
+
+	// partitions need to be threadsafe and should use the partlock
+	partlock   sync.RWMutex
+	partitions []*string
 }
 
-func NewAzureSharedResource() *AzureSharedResource {
-	return &AzureSharedResource{}
+func NewAzureSharedResource(accountName, containerName string, maxCapacity uint32) *AzureSharedResource {
+	res := &AzureSharedResource{
+		maxCapacity: maxCapacity,
+	}
+	mgr := newAzureBlobLeaseManager(res, accountName, containerName)
+	res.leaseManager = mgr
+	return res
 }
 
-func (r *AzureSharedResource) WithAccount(val string) *AzureSharedResource {
-	r.accountName = &val
-	return r
+func NewAzureSharedResourceMock(maxCapacity uint32) *AzureSharedResource {
+	res := &AzureSharedResource{
+		maxCapacity: maxCapacity,
+	}
+	mgr := newMockLeaseManager(res)
+	res.leaseManager = mgr
+	return res
 }
 
 func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
-	r.masterKey = &val
-	return r
-}
-
-func (r *AzureSharedResource) WithContainer(val string) *AzureSharedResource {
-	r.containerName = &val
+	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
+		ablm.WithMasterKey(val)
+	}
 	return r
 }
 
 func (r *AzureSharedResource) WithFactor(val uint32) *AzureSharedResource {
 	r.factor = val
-	return r
-}
-
-func (r *AzureSharedResource) WithMaxCapacity(val uint32) *AzureSharedResource {
-	r.maxCapacity = val
 	return r
 }
 
@@ -75,15 +100,15 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 
 	// check requirements
-	if r.accountName == nil || r.masterKey == nil || r.containerName == nil {
-		err = fmt.Errorf("you must supply Account, MasterKey, and Container to provision AzureSharedResource.")
+	if r.leaseManager == nil {
+		err = UndefinedLeaseManagerError{}
 		return
 	}
 	if r.factor == 0 {
 		r.factor = 1 // assume 1:1
 	}
 	if r.maxCapacity < 1 {
-		err = fmt.Errorf("you must specify MaxCapacity for AzureSharedResource.")
+		err = UndefinedMaxCapacityError{}
 		return
 	}
 	if r.maxInterval < 1 {
@@ -94,54 +119,26 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	r.partlock.Lock()
 	defer r.partlock.Unlock()
 
-	// create credential
-	credential, err := azblob.NewSharedKeyCredential(*r.accountName, *r.masterKey)
+	// provision the container
+	err = r.leaseManager.provision(ctx)
 	if err != nil {
 		return
 	}
-
-	// create the pipeline
-	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-
-	// create the container reference
-	url, err := url.Parse(fmt.Sprintf("https://%s.blob.core.windows.net/%s", *r.accountName, *r.containerName))
-	if err != nil {
-		return
-	}
-	r.container = azblob.NewContainerURL(*url, pipeline)
 
 	// make 1 partition per factor
 	count := int(math.Ceil(float64(r.maxCapacity) / float64(r.factor)))
 	if count > 500 {
-		err = fmt.Errorf("more than 500 partitions is not supported, consider increasing Factor.")
+		err = PartitionsOutOfRangeError{
+			MaxCapacity:    r.maxCapacity,
+			Factor:         r.factor,
+			PartitionCount: count,
+		}
 		return
 	}
 	r.partitions = make([]*string, count)
 
-	// create a blob for each partition
-	for i := 0; i < len(r.partitions); i++ {
-		blob := r.container.NewBlockBlobURL(fmt.Sprint(i))
-		var empty []byte
-		reader := bytes.NewReader(empty)
-		cond := azblob.BlobAccessConditions{
-			ModifiedAccessConditions: azblob.ModifiedAccessConditions{
-				IfNoneMatch: "*",
-			},
-		}
-		_, err = blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil)
-		if err != nil {
-			if serr, ok := err.(azblob.StorageError); ok {
-				switch serr.ServiceCode() {
-				case azblob.ServiceCodeBlobAlreadyExists, azblob.ServiceCodeLeaseIDMissing:
-					err = nil // these are legit conditions
-				default:
-					return
-				}
-			} else {
-				return
-			}
-		}
-	}
+	// provision partitions
+	err = r.leaseManager.createPartitions(ctx, count)
 
 	return
 }
@@ -259,7 +256,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 	// prepare for shutdown
 	r.shutdown = sync.WaitGroup{}
 	r.shutdown.Add(1)
-	r.stop = make(chan bool, 1)
+	r.stop = make(chan bool)
 
 	// run the loop to try and allocate resources
 	go func() {
@@ -291,29 +288,15 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 			if err == nil && count < target {
 
 				// attempt to allocate the partition
-				blob := r.container.NewBlockBlobURL(fmt.Sprint(index))
 				id := fmt.Sprint(uuid.New())
-				_, err := blob.AcquireLease(ctx, id, 15, azblob.ModifiedAccessConditions{})
-				if err != nil {
-					if serr, ok := err.(azblob.StorageError); ok {
-						switch serr.ServiceCode() {
-						case azblob.ServiceCodeLeaseAlreadyPresent:
-							// you cannot allocate a lease that is already assigned; try again in a bit
-							r.emit("failed", int(index), nil)
-							continue Loop
-						default:
-							msg := err.Error()
-							r.emit("error", 0, &msg)
-						}
-					} else {
-						msg := err.Error()
-						r.emit("error", 0, &msg)
-					}
+				leaseTime := r.leaseManager.leasePartition(ctx, id, index)
+				if leaseTime == 0 {
+					continue Loop
 				}
 
 				// clear the partition after the lease
 				go func(i uint32) {
-					time.Sleep(15 * time.Second)
+					time.Sleep(leaseTime)
 					r.clearPartitionId(i)
 					r.emit("cleared", int(index), nil)
 					recalc()
@@ -332,6 +315,6 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 }
 
 func (r *AzureSharedResource) Stop() {
-	r.stop <- true
+	close(r.stop)
 	r.shutdown.Wait()
 }

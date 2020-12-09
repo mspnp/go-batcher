@@ -77,17 +77,24 @@ func (o *Operation) makeAttempt() {
 
 type Batcher struct {
 	eventer
+
+	// configuration items that should not change after Start()
 	sharedResource   SharedResource
 	maxBufferSize    uint32
 	flushInterval    time.Duration
 	capacityInterval time.Duration
 	maxOperationTime time.Duration
-	buffer           chan *Operation
-	stop             chan bool
-	pause            chan bool
-	shutdown         sync.WaitGroup
-	targetMutex      sync.RWMutex
-	target           uint32
+	pauseTime        time.Duration
+
+	// used for internal operations
+	buffer   chan *Operation
+	stop     chan bool
+	pause    chan bool
+	shutdown sync.WaitGroup
+
+	// target needs to be threadsafe and changes frequently
+	targetMutex sync.RWMutex
+	target      uint32
 }
 
 func NewBatcher() *Batcher {
@@ -101,6 +108,7 @@ func (r *Batcher) WithSharedResource(res SharedResource) *Batcher {
 
 func (r *Batcher) WithMaxBufferSize(val uint32) *Batcher {
 	r.maxBufferSize = val
+	// NOTE: putting the buffer allocation here allows for pushing to the buffer before starting
 	r.buffer = make(chan *Operation, r.maxBufferSize)
 	return r
 }
@@ -120,6 +128,11 @@ func (r *Batcher) WithMaxOperationTime(val time.Duration) *Batcher {
 	return r
 }
 
+func (r *Batcher) WithPauseTime(val time.Duration) *Batcher {
+	r.pauseTime = val
+	return r
+}
+
 func (r *Batcher) applyDefaults() {
 	if r.maxBufferSize == 0 {
 		r.maxBufferSize = 10000
@@ -132,6 +145,9 @@ func (r *Batcher) applyDefaults() {
 	}
 	if r.maxOperationTime == 0 {
 		r.maxOperationTime = 1 * time.Minute
+	}
+	if r.pauseTime == 0 {
+		r.pauseTime = 500 * time.Millisecond
 	}
 }
 
@@ -194,12 +210,12 @@ func (r *Batcher) Pause() {
 	}
 }
 
-func (r *Batcher) OperatorsInBuffer() uint32 {
+func (r *Batcher) OperationsInBuffer() uint32 {
 	return uint32(len(r.buffer))
 }
 
 func (r *Batcher) NeedsCapacity() uint32 {
-	return atomic.LoadUint32(&r.target)
+	return r.getTarget()
 }
 
 func (r *Batcher) getTarget() uint32 {
@@ -208,10 +224,15 @@ func (r *Batcher) getTarget() uint32 {
 	return r.target
 }
 
-func (r *Batcher) setTarget(val uint32) {
+func (r *Batcher) trySetTargetToZero() bool {
 	r.targetMutex.Lock()
 	defer r.targetMutex.Unlock()
-	r.target = val
+	if r.target > 0 {
+		r.target = 0
+		return true
+	} else {
+		return false
+	}
 }
 
 func (r *Batcher) incTarget(val int) {
@@ -231,16 +252,23 @@ func (r *Batcher) Start() *Batcher {
 
 	// setup
 	r.pause = make(chan bool, 1)
+	if r.buffer == nil {
+		// NOTE: this supports allocating a buffer without having called WithMaxBufferSize
+		r.buffer = make(chan *Operation, r.maxBufferSize)
+	}
 
 	// TODO update the documentation
 
 	// start the timers
 	capacityTimer := time.NewTicker(r.capacityInterval)
 	flushTimer := time.NewTicker(r.flushInterval)
+	auditTimer := time.NewTicker(10 * time.Second)
 
 	// define the func for flushing a batch
+	var lastFlushWithRecords time.Time
 	call := func(watcher *Watcher, operations []*Operation) {
 		if watcher.onReady != nil && len(operations) > 0 {
+			lastFlushWithRecords = time.Now()
 			go func() {
 
 				// increment an attempt
@@ -276,11 +304,10 @@ func (r *Batcher) Start() *Batcher {
 	// prepare for shutdown
 	r.shutdown = sync.WaitGroup{}
 	r.shutdown.Add(1)
-	r.stop = make(chan bool, 1)
+	r.stop = make(chan bool)
 
 	// process
 	go func() {
-		lastFlushWithRecords := time.Now()
 
 		// shutdown
 		defer func() {
@@ -302,9 +329,21 @@ func (r *Batcher) Start() *Batcher {
 
 			case <-r.pause:
 				// pause; typically this is requested because there is too much pressure on the datastore
-				// TODO: make this configurable
-				r.emit("pause", 500, nil)
-				time.Sleep(500 * time.Millisecond)
+				r.emit("pause", int(r.pauseTime.Milliseconds()), nil)
+				time.Sleep(r.pauseTime)
+
+			case <-auditTimer.C:
+				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
+				if len(r.buffer) < 1 && time.Since(lastFlushWithRecords) > r.maxOperationTime {
+					if r.trySetTargetToZero() {
+						msg := "an audit revealed that the target should be zero but was not."
+						r.emit("audit-fail", 0, &msg)
+					} else {
+						r.emit("audit-pass", 0, nil)
+					}
+				} else {
+					r.emit("audit-skip", 0, nil)
+				}
 
 			case <-capacityTimer.C:
 				// ask for capacity
@@ -328,12 +367,12 @@ func (r *Batcher) Start() *Batcher {
 				var consumed uint32 = 0
 			Fill:
 				for {
-					if enforceCapacity && consumed >= capacity {
+					// NOTE: by requiring consumed to be higher than capacity we ensure the process always dispatches at least 1 operation
+					if enforceCapacity && consumed > capacity {
 						break Fill
 					}
 					select {
 					case op := <-r.buffer:
-						lastFlushWithRecords = time.Now()
 
 						// process immediately or add to a batch
 						if op == nil {
@@ -364,11 +403,6 @@ func (r *Batcher) Start() *Batcher {
 				}
 				count++
 
-				// implement a failsafe against requesting a target without having any operations
-				if time.Since(lastFlushWithRecords) > r.maxOperationTime && r.NeedsCapacity() > 0 {
-					r.setTarget(0)
-				}
-
 			}
 		}
 
@@ -378,6 +412,6 @@ func (r *Batcher) Start() *Batcher {
 }
 
 func (r *Batcher) Stop() {
-	r.stop <- true
+	close(r.stop)
 	r.shutdown.Wait()
 }
