@@ -93,9 +93,9 @@ func NewAzureSharedResourceMock(sharedCapacity uint32) *AzureSharedResource {
 }
 */
 
-func (r *AzureSharedResource) WithMocks(container IAzureContainer) *AzureSharedResource {
+func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
-		ablm.withMocks(container)
+		ablm.withMocks(container, blob)
 	}
 	return r
 }

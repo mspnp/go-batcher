@@ -26,6 +26,7 @@ type azureBlobLeaseManager struct {
 
 	// internal properties
 	container IAzureContainer
+	blob      IAzureBlob
 }
 
 func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string) *azureBlobLeaseManager {
@@ -37,8 +38,9 @@ func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) withMocks(container IAzureContainer) *azureBlobLeaseManager {
+func (m *azureBlobLeaseManager) withMocks(container IAzureContainer, blob IAzureBlob) *azureBlobLeaseManager {
 	m.container = container
+	m.blob = blob
 	return m
 }
 
@@ -109,11 +111,19 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 	return
 }
 
+func (m *azureBlobLeaseManager) getBlob(index int) IAzureBlob {
+	if m.blob != nil {
+		return m.blob
+	} else {
+		return m.container.NewBlockBlobURL(fmt.Sprint(index))
+	}
+}
+
 func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int) (err error) {
 
 	// create a blob for each partition
 	for i := 0; i < count; i++ {
-		blob := m.container.NewBlockBlobURL(fmt.Sprint(i))
+		blob := m.getBlob(i)
 		var empty []byte
 		reader := bytes.NewReader(empty)
 		cond := azblob.BlobAccessConditions{
@@ -146,7 +156,7 @@ func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, i
 	var secondsToLease int32 = 15
 
 	// attempt to allocate the partition
-	blob := m.container.NewBlockBlobURL(fmt.Sprint(index))
+	blob := m.getBlob(int(index))
 	_, err := blob.AcquireLease(ctx, id, secondsToLease, azblob.ModifiedAccessConditions{})
 	if err != nil {
 		if serr, ok := err.(azblob.StorageError); ok {
