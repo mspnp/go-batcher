@@ -12,6 +12,7 @@ type leaseManager interface {
 	leasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration)
 }
 
+/*
 type mockLeaseManager struct {
 	repeater
 }
@@ -35,5 +36,7 @@ func (m *mockLeaseManager) createPartitions(ctx context.Context, count int) (err
 }
 
 func (m *mockLeaseManager) leasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
-	return
+	m.emit("test:lease-partition", int(index), nil)
+	return 15 * time.Second
 }
+*/

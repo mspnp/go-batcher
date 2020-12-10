@@ -12,16 +12,28 @@ import (
 	"github.com/google/uuid"
 )
 
+type NotProvisionedError struct{}
+
+func (e NotProvisionedError) Error() string {
+	return "Provision() must be called before Start()."
+}
+
+type MultipleCallsNotAllowedError struct{}
+
+func (e MultipleCallsNotAllowedError) Error() string {
+	return "this method may not be called more than once."
+}
+
 type UndefinedLeaseManagerError struct{}
 
 func (e UndefinedLeaseManagerError) Error() string {
 	return "a lease manager must be assigned."
 }
 
-type UndefinedMaxCapacityError struct{}
+type UndefinedSharedCapacityError struct{}
 
-func (e UndefinedMaxCapacityError) Error() string {
-	return "you must define a MaxCapacity."
+func (e UndefinedSharedCapacityError) Error() string {
+	return "you must define a SharedCapacity."
 }
 
 type PartitionsOutOfRangeError struct {
@@ -39,14 +51,18 @@ type AzureSharedResource struct {
 
 	// configuration items that should not change after Provision()
 	factor           uint32
-	maxCapacity      uint32
 	maxInterval      uint32
+	sharedCapacity   uint32
 	reservedCapacity uint32
 
 	// used for internal operations
-	leaseManager leaseManager
-	stop         chan bool
-	shutdown     sync.WaitGroup
+	provisionOnce sync.Once
+	provisioned   bool
+	startOnce     sync.Once
+	stopOnce      sync.Once
+	leaseManager  leaseManager
+	stop          chan bool
+	shutdown      sync.WaitGroup
 
 	// capacity and target needs to be threadsafe and changes frequently
 	capacity uint32
@@ -57,27 +73,36 @@ type AzureSharedResource struct {
 	partitions []*string
 }
 
-func NewAzureSharedResource(accountName, containerName string, maxCapacity uint32) *AzureSharedResource {
+func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) *AzureSharedResource {
 	res := &AzureSharedResource{
-		maxCapacity: maxCapacity,
+		sharedCapacity: sharedCapacity,
 	}
 	mgr := newAzureBlobLeaseManager(res, accountName, containerName)
 	res.leaseManager = mgr
 	return res
 }
 
-func NewAzureSharedResourceMock(maxCapacity uint32) *AzureSharedResource {
+/*
+func NewAzureSharedResourceMock(sharedCapacity uint32) *AzureSharedResource {
 	res := &AzureSharedResource{
-		maxCapacity: maxCapacity,
+		sharedCapacity: sharedCapacity,
 	}
 	mgr := newMockLeaseManager(res)
 	res.leaseManager = mgr
 	return res
 }
+*/
+
+func (r *AzureSharedResource) WithMocks(container IAzureContainer) *AzureSharedResource {
+	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
+		ablm.withMocks(container)
+	}
+	return r
+}
 
 func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
-		ablm.WithMasterKey(val)
+		ablm.withMasterKey(val)
 	}
 	return r
 }
@@ -97,7 +122,10 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 	return r
 }
 
-func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
+func (r *AzureSharedResource) provision(ctx context.Context) (err error) {
+
+	// NOTE: provisioned=true means it was called, not that it was successful
+	r.provisioned = true
 
 	// check requirements
 	if r.leaseManager == nil {
@@ -107,8 +135,8 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	if r.factor == 0 {
 		r.factor = 1 // assume 1:1
 	}
-	if r.maxCapacity < 1 {
-		err = UndefinedMaxCapacityError{}
+	if r.sharedCapacity < 1 {
+		err = UndefinedSharedCapacityError{}
 		return
 	}
 	if r.maxInterval < 1 {
@@ -126,10 +154,10 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	}
 
 	// make 1 partition per factor
-	count := int(math.Ceil(float64(r.maxCapacity) / float64(r.factor)))
+	count := int(math.Ceil(float64(r.sharedCapacity) / float64(r.factor)))
 	if count > 500 {
 		err = PartitionsOutOfRangeError{
-			MaxCapacity:    r.maxCapacity,
+			MaxCapacity:    r.sharedCapacity,
 			Factor:         r.factor,
 			PartitionCount: count,
 		}
@@ -143,13 +171,21 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	return
 }
 
+func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
+	err = MultipleCallsNotAllowedError{}
+	r.provisionOnce.Do(func() {
+		err = r.provision(ctx)
+	})
+	return
+}
+
 func (r *AzureSharedResource) MaxCapacity() uint32 {
-	return r.maxCapacity + r.reservedCapacity
+	return r.sharedCapacity + r.reservedCapacity
 }
 
 func (r *AzureSharedResource) Capacity() uint32 {
-	sharedCapacity := atomic.LoadUint32(&r.capacity)
-	return sharedCapacity + r.reservedCapacity
+	allocatedCapacity := atomic.LoadUint32(&r.capacity)
+	return allocatedCapacity + r.reservedCapacity
 }
 
 func (r *AzureSharedResource) calc() (total uint32) {
@@ -243,7 +279,13 @@ func (r *AzureSharedResource) clearPartitionId(index uint32) {
 
 }
 
-func (r *AzureSharedResource) Start(ctx context.Context) {
+func (r *AzureSharedResource) start(ctx context.Context) (err error) {
+
+	// ensure Provision() was called first
+	if !r.provisioned {
+		err = NotProvisionedError{}
+		return
+	}
 
 	// calculate capacity change
 	recalc := func() {
@@ -254,7 +296,6 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 	}
 
 	// prepare for shutdown
-	r.shutdown = sync.WaitGroup{}
 	r.shutdown.Add(1)
 	r.stop = make(chan bool)
 
@@ -298,7 +339,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 				go func(i uint32) {
 					time.Sleep(leaseTime)
 					r.clearPartitionId(i)
-					r.emit("cleared", int(index), nil)
+					r.emit("released", int(index), nil)
 					recalc()
 				}(index)
 
@@ -312,9 +353,22 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 		}
 	}()
 
+	return
+}
+
+func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
+	err = MultipleCallsNotAllowedError{}
+	r.startOnce.Do(func() {
+		err = r.start(ctx)
+	})
+	return
 }
 
 func (r *AzureSharedResource) Stop() {
-	close(r.stop)
-	r.shutdown.Wait()
+	r.stopOnce.Do(func() {
+		if r.stop != nil {
+			close(r.stop)
+		}
+		r.shutdown.Wait()
+	})
 }

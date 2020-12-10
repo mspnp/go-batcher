@@ -302,7 +302,6 @@ func (r *Batcher) Start() *Batcher {
 	}
 
 	// prepare for shutdown
-	r.shutdown = sync.WaitGroup{}
 	r.shutdown.Add(1)
 	r.stop = make(chan bool)
 

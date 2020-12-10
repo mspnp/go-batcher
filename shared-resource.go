@@ -7,6 +7,6 @@ type SharedResource interface {
 	MaxCapacity() uint32
 	Capacity() uint32
 	GiveMe(target uint32)
-	Start(ctx context.Context)
+	Start(ctx context.Context) error
 	Stop()
 }

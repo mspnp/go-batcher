@@ -31,8 +31,9 @@ func (r *ProvisionedSharedResource) GiveMe(target uint32) {
 	// nothing to do
 }
 
-func (r *ProvisionedSharedResource) Start(ctx context.Context) {
+func (r *ProvisionedSharedResource) Start(ctx context.Context) error {
 	// nothing to do
+	return nil
 }
 
 func (r *ProvisionedSharedResource) Stop() {

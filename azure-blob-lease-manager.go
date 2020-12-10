@@ -25,7 +25,7 @@ type azureBlobLeaseManager struct {
 	containerName *string
 
 	// internal properties
-	container azblob.ContainerURL
+	container IAzureContainer
 }
 
 func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string) *azureBlobLeaseManager {
@@ -37,12 +37,17 @@ func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) WithMasterKey(val string) *azureBlobLeaseManager {
+func (m *azureBlobLeaseManager) withMocks(container IAzureContainer) *azureBlobLeaseManager {
+	m.container = container
+	return m
+}
+
+func (m *azureBlobLeaseManager) withMasterKey(val string) *azureBlobLeaseManager {
 	m.masterKey = &val
 	return m
 }
 
-func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
+func (m *azureBlobLeaseManager) useRealContainer() (err error) {
 
 	// ensure the master key is provided
 	if m.masterKey == nil {
@@ -59,16 +64,31 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 	// NOTE: managed identity or AAD tokens could be used this way; tested
 	//credential := azblob.NewTokenCredential("-access-token-goes-here-", nil)
 
-	// create the pipeline
-	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-
-	// create container if it doesn't exist
+	// use a real azblob container if a mock wasn't passed
 	ref := fmt.Sprintf("https://%s.blob.core.windows.net/%s", *m.accountName, *m.containerName)
-	url, err := url.Parse(ref)
+	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
+	var url *url.URL
+	url, err = url.Parse(ref)
 	if err != nil {
 		return
 	}
 	m.container = azblob.NewContainerURL(*url, pipeline)
+
+	return
+}
+
+func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
+
+	// default to using a real azblob container
+	if m.container == nil {
+		err = m.useRealContainer()
+		if err != nil {
+			return
+		}
+	}
+
+	// create the container if it doesn't exist
+	ref := fmt.Sprintf("https://%s.blob.core.windows.net/%s", *m.accountName, *m.containerName)
 	_, err = m.container.Create(ctx, nil, azblob.PublicAccessNone)
 	if err != nil {
 		if serr, ok := err.(azblob.StorageError); ok {
