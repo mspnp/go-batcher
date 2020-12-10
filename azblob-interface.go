@@ -16,13 +16,15 @@ type IAzureStorage interface {
 type IAzureContainer interface {
 	Create(context.Context, azblob.Metadata, azblob.PublicAccessType) (*azblob.ContainerCreateResponse, error)
 	NewBlockBlobURL(string) azblob.BlockBlobURL
-	//NewBlockBlobURL(string) IAzureBlob
 }
 
 type IAzureBlob interface {
 	Upload(context.Context, io.ReadSeeker, azblob.BlobHTTPHeaders, azblob.Metadata, azblob.BlobAccessConditions, azblob.AccessTierType, azblob.BlobTagsMap) (*azblob.BlockBlobUploadResponse, error)
 	AcquireLease(context.Context, string, int32, azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error)
 }
+
+	//NewBlockBlobURL(string) IAzureBlob
+
 
 /*
 type AzureStorage struct {

@@ -16,9 +16,9 @@ type blockBlobURLMock struct {
 	mock.Mock
 }
 
-func (b *blockBlobURLMock) Upload(context.Context, io.ReadSeeker, azblob.BlobHTTPHeaders, azblob.Metadata, azblob.BlobAccessConditions, azblob.AccessTierType, azblob.BlobTagsMap) (*azblob.BlockBlobUploadResponse, error) {
-	fmt.Println("upload-a-doodles")
-	return nil, nil
+func (b *blockBlobURLMock) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap) (*azblob.BlockBlobUploadResponse, error) {
+	args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags)
+	return nil, args.Error(1)
 }
 
 func (b *blockBlobURLMock) AcquireLease(context.Context, string, int32, azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error) {
@@ -35,29 +35,26 @@ func (c *containerURLMock) Create(context.Context, azblob.Metadata, azblob.Publi
 	return nil, nil
 }
 
-func (c *containerURLMock) NewBlockBlobURL(string) azblob.BlockBlobURL {
-	fmt.Println("new-blob")
-
-	/*
-		azblob.BlockBlockURL{}
-
-		azblob.blockblob
-
-		blob := new(blockBlobURLMock)
-		var bbb gobatcher.IAzureBlob = blob
-
-		return bbb
-
-		///return bbb.(azblob.BlockBlobURL)
-	*/
-
+func (c *containerURLMock) NewBlockBlobURL(url string) azblob.BlockBlobURL {
+	//args := c.Called(url)
+	//o := args.Get(0)
+	//return o.(gobatcher.IAzureBlob)   <-- I cannot cast this
 	return azblob.BlockBlobURL{}
 }
 
 func TestFake(t *testing.T) {
 	ctx := context.Background()
 
+	blob := new(blockBlobURLMock)
+	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			fmt.Println("updload")
+		}).Return(nil, nil)
+
 	container := new(containerURLMock)
+	container.On("NewBlockBlobURL", mock.Anything).Run(func(args mock.Arguments) {
+		fmt.Printf("eyp = %v\n", args.Get(0))
+	}).Return(blob)
 
 	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 100).
 		WithMasterKey("key").
