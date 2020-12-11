@@ -2,7 +2,14 @@ package batcher
 
 import "context"
 
-type SharedResource interface {
+const (
+	rateLimiterPhaseUninitialized = iota
+	rateLimiterPhaseProvisioned
+	rateLimiterPhaseStarted
+	rateLimiterPhaseStopped
+)
+
+type RateLimiter interface {
 	Provision(ctx context.Context) error
 	MaxCapacity() uint32
 	Capacity() uint32

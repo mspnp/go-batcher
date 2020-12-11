@@ -12,40 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type NotProvisionedError struct{}
-
-func (e NotProvisionedError) Error() string {
-	return "Provision() must be called before Start()."
-}
-
-type MultipleCallsNotAllowedError struct{}
-
-func (e MultipleCallsNotAllowedError) Error() string {
-	return "this method may not be called more than once."
-}
-
-type UndefinedLeaseManagerError struct{}
-
-func (e UndefinedLeaseManagerError) Error() string {
-	return "a lease manager must be assigned."
-}
-
-type UndefinedSharedCapacityError struct{}
-
-func (e UndefinedSharedCapacityError) Error() string {
-	return "you must define a SharedCapacity."
-}
-
-type PartitionsOutOfRangeError struct {
-	MaxCapacity    uint32
-	Factor         uint32
-	PartitionCount int
-}
-
-func (e PartitionsOutOfRangeError) Error() string {
-	return "you must have between 1 and 500 partitions."
-}
-
 type AzureSharedResource struct {
 	eventer
 
@@ -56,13 +22,13 @@ type AzureSharedResource struct {
 	reservedCapacity uint32
 
 	// used for internal operations
-	provisionOnce sync.Once
-	provisioned   bool
-	startOnce     sync.Once
-	stopOnce      sync.Once
-	leaseManager  leaseManager
-	stop          chan bool
-	shutdown      sync.WaitGroup
+	leaseManager leaseManager
+
+	// manage the phase
+	phaseMutex sync.Mutex
+	phase      int
+	shutdown   sync.WaitGroup
+	stop       chan bool
 
 	// capacity and target needs to be threadsafe and changes frequently
 	capacity uint32
@@ -81,17 +47,6 @@ func NewAzureSharedResource(accountName, containerName string, sharedCapacity ui
 	res.leaseManager = mgr
 	return res
 }
-
-/*
-func NewAzureSharedResourceMock(sharedCapacity uint32) *AzureSharedResource {
-	res := &AzureSharedResource{
-		sharedCapacity: sharedCapacity,
-	}
-	mgr := newMockLeaseManager(res)
-	res.leaseManager = mgr
-	return res
-}
-*/
 
 func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
@@ -122,10 +77,15 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 	return r
 }
 
-func (r *AzureSharedResource) provision(ctx context.Context) (err error) {
+func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 
-	// NOTE: provisioned=true means it was called, not that it was successful
-	r.provisioned = true
+	// only allow one phase at a time
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != rateLimiterPhaseUninitialized {
+		err = RateLimiterImproperOrderError{}
+		return
+	}
 
 	// check requirements
 	if r.leaseManager == nil {
@@ -143,7 +103,7 @@ func (r *AzureSharedResource) provision(ctx context.Context) (err error) {
 		r.maxInterval = 500 // default to 500 ms
 	}
 
-	// get a write lock
+	// get a write lock on partitions
 	r.partlock.Lock()
 	defer r.partlock.Unlock()
 
@@ -168,14 +128,9 @@ func (r *AzureSharedResource) provision(ctx context.Context) (err error) {
 	// provision partitions
 	err = r.leaseManager.createPartitions(ctx, count)
 
-	return
-}
+	// mark provision as completed
+	r.phase = rateLimiterPhaseProvisioned
 
-func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
-	err = MultipleCallsNotAllowedError{}
-	r.provisionOnce.Do(func() {
-		err = r.provision(ctx)
-	})
 	return
 }
 
@@ -279,11 +234,13 @@ func (r *AzureSharedResource) clearPartitionId(index uint32) {
 
 }
 
-func (r *AzureSharedResource) start(ctx context.Context) (err error) {
+func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 
-	// ensure Provision() was called first
-	if !r.provisioned {
-		err = NotProvisionedError{}
+	// only allow one phase at a time
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != rateLimiterPhaseProvisioned {
+		err = RateLimiterImproperOrderError{}
 		return
 	}
 
@@ -291,9 +248,12 @@ func (r *AzureSharedResource) start(ctx context.Context) (err error) {
 	recalc := func() {
 		go func() {
 			capacity := r.calc()
-			r.emit("capacity", int(capacity), nil)
+			r.emit("capacity", int(capacity+r.reservedCapacity), nil)
 		}()
 	}
+
+	// announce starting capacity
+	recalc()
 
 	// prepare for shutdown
 	r.shutdown.Add(1)
@@ -353,22 +313,29 @@ func (r *AzureSharedResource) start(ctx context.Context) (err error) {
 		}
 	}()
 
-	return
-}
+	// increment phase
+	r.phase = rateLimiterPhaseStarted
 
-func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
-	err = MultipleCallsNotAllowedError{}
-	r.startOnce.Do(func() {
-		err = r.start(ctx)
-	})
 	return
 }
 
 func (r *AzureSharedResource) Stop() {
-	r.stopOnce.Do(func() {
-		if r.stop != nil {
-			close(r.stop)
-		}
-		r.shutdown.Wait()
-	})
+
+	// only allow one phase at a time
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase == rateLimiterPhaseStopped {
+		// NOTE: there should be no need for callers to handle errors at Stop(), we will just ignore them
+		return
+	}
+
+	// signal the stop
+	if r.stop != nil {
+		close(r.stop)
+	}
+	r.shutdown.Wait()
+
+	// update the phase
+	r.phase = rateLimiterPhaseStopped
+
 }

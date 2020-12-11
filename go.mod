@@ -8,5 +8,5 @@ require (
 	github.com/google/uuid v1.1.2
 	github.com/plasne/go-config v1.7.1 // indirect
 	github.com/rs/zerolog v1.20.0
-	github.com/stretchr/testify v1.2.2
+	github.com/stretchr/testify v1.6.1
 )

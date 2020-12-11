@@ -10,12 +10,6 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 )
 
-type NoAuthenticationProvidedError struct{}
-
-func (e NoAuthenticationProvidedError) Error() string {
-	return "you must provide a master key."
-}
-
 type azureBlobLeaseManager struct {
 	repeater
 
@@ -49,24 +43,24 @@ func (m *azureBlobLeaseManager) withMasterKey(val string) *azureBlobLeaseManager
 	return m
 }
 
-func (m *azureBlobLeaseManager) useRealContainer() (err error) {
+func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 
-	// ensure the master key is provided
-	if m.masterKey == nil {
-		err = NoAuthenticationProvidedError{}
-		return
-	}
-
-	// create credential
-	credential, err := azblob.NewSharedKeyCredential(*m.accountName, *m.masterKey)
-	if err != nil {
-		return
+	// choose the appropriate credential
+	var credential azblob.Credential
+	if m.masterKey != nil {
+		credential, err = azblob.NewSharedKeyCredential(*m.accountName, *m.masterKey)
+		if err != nil {
+			return
+		}
+	} else {
+		credential = azblob.NewAnonymousCredential()
 	}
 
 	// NOTE: managed identity or AAD tokens could be used this way; tested
 	//credential := azblob.NewTokenCredential("-access-token-goes-here-", nil)
 
-	// use a real azblob container if a mock wasn't passed
+	// create pipeline and container reference
+	// NOTE: we only check for a mock container at the end to improve code-coverage
 	ref := fmt.Sprintf("https://%s.blob.core.windows.net/%s", *m.accountName, *m.containerName)
 	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
 	var url *url.URL
@@ -74,23 +68,11 @@ func (m *azureBlobLeaseManager) useRealContainer() (err error) {
 	if err != nil {
 		return
 	}
-	m.container = azblob.NewContainerURL(*url, pipeline)
-
-	return
-}
-
-func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
-
-	// default to using a real azblob container
 	if m.container == nil {
-		err = m.useRealContainer()
-		if err != nil {
-			return
-		}
+		m.container = azblob.NewContainerURL(*url, pipeline)
 	}
 
 	// create the container if it doesn't exist
-	ref := fmt.Sprintf("https://%s.blob.core.windows.net/%s", *m.accountName, *m.containerName)
 	_, err = m.container.Create(ctx, nil, azblob.PublicAccessNone)
 	if err != nil {
 		if serr, ok := err.(azblob.StorageError); ok {
@@ -115,6 +97,7 @@ func (m *azureBlobLeaseManager) getBlob(index int) IAzureBlob {
 	if m.blob != nil {
 		return m.blob
 	} else {
+		// NOTE: m.container only exists after provision()
 		return m.container.NewBlockBlobURL(fmt.Sprint(index))
 	}
 }

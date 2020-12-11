@@ -104,7 +104,7 @@ func main() {
 
 	// configure the batcher
 	batcher := gobatcher.NewBatcher().
-		WithSharedResource(azresource)
+		WithRateLimiter(azresource)
 	batcherListener := batcher.AddListener(func(event string, val int, msg *string) {
 		switch event {
 		case "shutdown":
@@ -122,12 +122,10 @@ func main() {
 	defer batcher.RemoveListener(batcherListener)
 
 	// start the batcher
-	batcher.Start()
-
-	http.HandleFunc("/query", func(res http.ResponseWriter, req *http.Request) {
-		// use same batcher here
-		// use different watcher here
-	})
+	err := batcher.Start()
+	if err != nil {
+		panic(err)
+	}
 
 	// handle the ingest
 	http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
@@ -202,7 +200,7 @@ func main() {
 
 	// start listening for HTTP requests
 	fmt.Printf("LISTENING on %v:\n", PORT)
-	err := http.ListenAndServe(fmt.Sprintf(":%v", PORT), nil)
+	err = http.ListenAndServe(fmt.Sprintf(":%v", PORT), nil)
 	if err != nil {
 		panic(err)
 	}
