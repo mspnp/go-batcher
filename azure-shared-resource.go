@@ -177,6 +177,9 @@ func (r *AzureSharedResource) GiveMe(target uint32) {
 	// determine the number of partitions needed
 	actual := math.Ceil(float64(target) / float64(r.factor))
 
+	// raise event
+	r.emit("target", int(target), nil)
+
 	// store
 	atomic.StoreUint32(&r.target, uint32(actual))
 

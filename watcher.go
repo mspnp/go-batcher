@@ -1,10 +1,13 @@
 package batcher
 
+import "time"
+
 type Watcher struct {
-	operations   []*Operation
-	maxAttempts  uint32
-	maxBatchSize uint32
-	onReady      func(ops []*Operation, done func())
+	operations       []*Operation
+	maxAttempts      uint32
+	maxBatchSize     uint32
+	maxOperationTime time.Duration
+	onReady          func(ops []*Operation, done func())
 }
 
 func NewWatcher(onReady func(ops []*Operation, done func())) *Watcher {
@@ -20,6 +23,11 @@ func (w *Watcher) WithMaxAttempts(val uint32) *Watcher {
 
 func (w *Watcher) WithMaxBatchSize(val uint32) *Watcher {
 	w.maxBatchSize = val
+	return w
+}
+
+func (w *Watcher) WithMaxOperationTime(val time.Duration) *Watcher {
+	w.maxOperationTime = val
 	return w
 }
 

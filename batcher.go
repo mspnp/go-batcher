@@ -8,6 +8,7 @@ import (
 const (
 	batcherPhaseUninitialized = iota
 	batcherPhaseStarted
+	batcherPhasePaused
 	batcherPhaseStopped
 )
 
@@ -18,6 +19,7 @@ type Batcher struct {
 	ratelimiter       RateLimiter
 	flushInterval     time.Duration
 	capacityInterval  time.Duration
+	auditInterval     time.Duration
 	maxOperationTime  time.Duration
 	pauseTime         time.Duration
 	errorOnFullBuffer bool
@@ -67,6 +69,11 @@ func (r *Batcher) WithCapacityInterval(val time.Duration) *Batcher {
 	return r
 }
 
+func (r *Batcher) WithAuditInterval(val time.Duration) *Batcher {
+	r.auditInterval = val
+	return r
+}
+
 func (r *Batcher) WithMaxOperationTime(val time.Duration) *Batcher {
 	r.maxOperationTime = val
 	return r
@@ -83,16 +90,19 @@ func (r *Batcher) WithErrorOnFullBuffer() *Batcher {
 }
 
 func (r *Batcher) applyDefaults() {
-	if r.flushInterval == 0 {
+	if r.flushInterval <= 0 {
 		r.flushInterval = 100 * time.Millisecond
 	}
-	if r.capacityInterval == 0 {
+	if r.capacityInterval <= 0 {
 		r.capacityInterval = 100 * time.Millisecond
 	}
-	if r.maxOperationTime == 0 {
+	if r.auditInterval <= 0 {
+		r.auditInterval = 10 * time.Second
+	}
+	if r.maxOperationTime <= 0 {
 		r.maxOperationTime = 1 * time.Minute
 	}
-	if r.pauseTime == 0 {
+	if r.pauseTime <= 0 {
 		r.pauseTime = 500 * time.Millisecond
 	}
 }
@@ -138,11 +148,38 @@ func (r *Batcher) Enqueue(op *Operation) error {
 }
 
 func (r *Batcher) Pause() {
+
+	// ensure pausing only happens when it is running
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseStarted {
+		// simply ignore an invalid pause
+		return
+	}
+
+	// allocate
+	if r.pause == nil {
+		r.pause = make(chan bool, 1)
+	}
+
+	// pause
 	select {
 	case r.pause <- true:
 		// successfully set the pause
 	default:
 		// pause was already set
+	}
+
+	// switch to paused phase
+	r.phase = batcherPhasePaused
+
+}
+
+func (r *Batcher) resume() {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase == batcherPhasePaused {
+		r.phase = batcherPhaseStarted
 	}
 }
 
@@ -202,15 +239,12 @@ func (r *Batcher) Start() (err error) {
 	// apply defaults
 	r.applyDefaults()
 
-	// setup
-	r.pause = make(chan bool, 1)
-
 	// TODO update the documentation
 
 	// start the timers
 	capacityTimer := time.NewTicker(r.capacityInterval)
 	flushTimer := time.NewTicker(r.flushInterval)
-	auditTimer := time.NewTicker(10 * time.Second)
+	auditTimer := time.NewTicker(r.auditInterval)
 
 	// define the func for flushing a batch
 	var lastFlushWithRecords time.Time
@@ -229,9 +263,13 @@ func (r *Batcher) Start() (err error) {
 				watcher.onReady(operations, func() {
 					close(waitForDone)
 				})
+				maxOperationTime := r.maxOperationTime
+				if watcher.maxOperationTime > 0 {
+					maxOperationTime = watcher.maxOperationTime
+				}
 				select {
 				case <-waitForDone:
-				case <-time.After(r.maxOperationTime):
+				case <-time.After(maxOperationTime):
 				}
 
 				// decrement target
@@ -279,6 +317,8 @@ func (r *Batcher) Start() (err error) {
 				// pause; typically this is requested because there is too much pressure on the datastore
 				r.emit("pause", int(r.pauseTime.Milliseconds()), nil)
 				time.Sleep(r.pauseTime)
+				r.resume()
+				r.emit("resume", 0, nil)
 
 			case <-auditTimer.C:
 				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
@@ -297,6 +337,7 @@ func (r *Batcher) Start() (err error) {
 				// ask for capacity
 				if r.ratelimiter != nil {
 					request := r.NeedsCapacity()
+					r.emit("request", int(request), nil)
 					r.ratelimiter.GiveMe(request)
 				}
 

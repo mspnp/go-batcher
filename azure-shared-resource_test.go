@@ -481,7 +481,7 @@ func TestGiveMe(t *testing.T) {
 
 }
 
-func TestStart(t *testing.T) {
+func TestAzureSRStart(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("start must be called after provision", func(t *testing.T) {
@@ -638,7 +638,7 @@ func TestStart(t *testing.T) {
 
 }
 
-func TestStop(t *testing.T) {
+func TestAzureSRStop(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("stop emits shutdown", func(t *testing.T) {
