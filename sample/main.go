@@ -67,10 +67,9 @@ func main() {
 	AZBLOB_CONTAINER := goconfig.AsString().TrySetByEnv("AZBLOB_CONTAINER").Print().Require().Value()
 
 	// start getting shared resource capacity
-	azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER).
+	azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
 		WithMasterKey(AZBLOB_KEY).
-		WithFactor(1000).
-		WithMaxCapacity(uint32(CAPACITY))
+		WithFactor(1000)
 	resourceListener := azresource.AddListener(func(event string, val int, msg *string) {
 		switch event {
 		case "shutdown":
@@ -79,7 +78,7 @@ func main() {
 			log.Trace().Msgf("AzureSharedResource has procured %v capacity.", val)
 		case "failed":
 			log.Trace().Msgf("AzureSharedResource failed to take control of partition %v.", val)
-		case "cleared":
+		case "released":
 			log.Trace().Msgf("AzureSharedResource lost control of partition %v.", val)
 		case "allocated":
 			log.Trace().Msgf("AzureSharedResource gained control of partition %v.", val)
@@ -99,11 +98,13 @@ func main() {
 	if err := azresource.Provision(ctx); err != nil {
 		panic(err)
 	}
-	azresource.Start(ctx)
+	if err := azresource.Start(ctx); err != nil {
+		panic(err)
+	}
 
 	// configure the batcher
 	batcher := gobatcher.NewBatcher().
-		WithSharedResource(azresource)
+		WithRateLimiter(azresource)
 	batcherListener := batcher.AddListener(func(event string, val int, msg *string) {
 		switch event {
 		case "shutdown":
@@ -121,7 +122,10 @@ func main() {
 	defer batcher.RemoveListener(batcherListener)
 
 	// start the batcher
-	batcher.Start()
+	err := batcher.Start()
+	if err != nil {
+		panic(err)
+	}
 
 	// handle the ingest
 	http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
@@ -196,7 +200,7 @@ func main() {
 
 	// start listening for HTTP requests
 	fmt.Printf("LISTENING on %v:\n", PORT)
-	err := http.ListenAndServe(fmt.Sprintf(":%v", PORT), nil)
+	err = http.ListenAndServe(fmt.Sprintf(":%v", PORT), nil)
 	if err != nil {
 		panic(err)
 	}

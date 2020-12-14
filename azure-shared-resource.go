@@ -12,41 +12,23 @@ import (
 	"github.com/google/uuid"
 )
 
-type UndefinedLeaseManagerError struct{}
-
-func (e UndefinedLeaseManagerError) Error() string {
-	return "a lease manager must be assigned."
-}
-
-type UndefinedMaxCapacityError struct{}
-
-func (e UndefinedMaxCapacityError) Error() string {
-	return "you must define a MaxCapacity."
-}
-
-type PartitionsOutOfRangeError struct {
-	MaxCapacity    uint32
-	Factor         uint32
-	PartitionCount int
-}
-
-func (e PartitionsOutOfRangeError) Error() string {
-	return "you must have between 1 and 500 partitions."
-}
-
 type AzureSharedResource struct {
 	eventer
 
 	// configuration items that should not change after Provision()
 	factor           uint32
-	maxCapacity      uint32
 	maxInterval      uint32
+	sharedCapacity   uint32
 	reservedCapacity uint32
 
 	// used for internal operations
 	leaseManager leaseManager
-	stop         chan bool
-	shutdown     sync.WaitGroup
+
+	// manage the phase
+	phaseMutex sync.Mutex
+	phase      int
+	shutdown   sync.WaitGroup
+	stop       chan bool
 
 	// capacity and target needs to be threadsafe and changes frequently
 	capacity uint32
@@ -57,27 +39,25 @@ type AzureSharedResource struct {
 	partitions []*string
 }
 
-func NewAzureSharedResource(accountName, containerName string, maxCapacity uint32) *AzureSharedResource {
+func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) *AzureSharedResource {
 	res := &AzureSharedResource{
-		maxCapacity: maxCapacity,
+		sharedCapacity: sharedCapacity,
 	}
 	mgr := newAzureBlobLeaseManager(res, accountName, containerName)
 	res.leaseManager = mgr
 	return res
 }
 
-func NewAzureSharedResourceMock(maxCapacity uint32) *AzureSharedResource {
-	res := &AzureSharedResource{
-		maxCapacity: maxCapacity,
+func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) *AzureSharedResource {
+	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
+		ablm.withMocks(container, blob)
 	}
-	mgr := newMockLeaseManager(res)
-	res.leaseManager = mgr
-	return res
+	return r
 }
 
 func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
-		ablm.WithMasterKey(val)
+		ablm.withMasterKey(val)
 	}
 	return r
 }
@@ -99,6 +79,14 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 
 func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 
+	// only allow one phase at a time
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != rateLimiterPhaseUninitialized {
+		err = RateLimiterImproperOrderError{}
+		return
+	}
+
 	// check requirements
 	if r.leaseManager == nil {
 		err = UndefinedLeaseManagerError{}
@@ -107,15 +95,15 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	if r.factor == 0 {
 		r.factor = 1 // assume 1:1
 	}
-	if r.maxCapacity < 1 {
-		err = UndefinedMaxCapacityError{}
+	if r.sharedCapacity < 1 {
+		err = UndefinedSharedCapacityError{}
 		return
 	}
 	if r.maxInterval < 1 {
 		r.maxInterval = 500 // default to 500 ms
 	}
 
-	// get a write lock
+	// get a write lock on partitions
 	r.partlock.Lock()
 	defer r.partlock.Unlock()
 
@@ -126,10 +114,10 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	}
 
 	// make 1 partition per factor
-	count := int(math.Ceil(float64(r.maxCapacity) / float64(r.factor)))
+	count := int(math.Ceil(float64(r.sharedCapacity) / float64(r.factor)))
 	if count > 500 {
 		err = PartitionsOutOfRangeError{
-			MaxCapacity:    r.maxCapacity,
+			MaxCapacity:    r.sharedCapacity,
 			Factor:         r.factor,
 			PartitionCount: count,
 		}
@@ -140,16 +128,19 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	// provision partitions
 	err = r.leaseManager.createPartitions(ctx, count)
 
+	// mark provision as completed
+	r.phase = rateLimiterPhaseProvisioned
+
 	return
 }
 
 func (r *AzureSharedResource) MaxCapacity() uint32 {
-	return r.maxCapacity + r.reservedCapacity
+	return r.sharedCapacity + r.reservedCapacity
 }
 
 func (r *AzureSharedResource) Capacity() uint32 {
-	sharedCapacity := atomic.LoadUint32(&r.capacity)
-	return sharedCapacity + r.reservedCapacity
+	allocatedCapacity := atomic.LoadUint32(&r.capacity)
+	return allocatedCapacity + r.reservedCapacity
 }
 
 func (r *AzureSharedResource) calc() (total uint32) {
@@ -185,6 +176,9 @@ func (r *AzureSharedResource) GiveMe(target uint32) {
 
 	// determine the number of partitions needed
 	actual := math.Ceil(float64(target) / float64(r.factor))
+
+	// raise event
+	r.emit("target", int(target), nil)
 
 	// store
 	atomic.StoreUint32(&r.target, uint32(actual))
@@ -243,18 +237,28 @@ func (r *AzureSharedResource) clearPartitionId(index uint32) {
 
 }
 
-func (r *AzureSharedResource) Start(ctx context.Context) {
+func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
+
+	// only allow one phase at a time
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != rateLimiterPhaseProvisioned {
+		err = RateLimiterImproperOrderError{}
+		return
+	}
 
 	// calculate capacity change
 	recalc := func() {
 		go func() {
 			capacity := r.calc()
-			r.emit("capacity", int(capacity), nil)
+			r.emit("capacity", int(capacity+r.reservedCapacity), nil)
 		}()
 	}
 
+	// announce starting capacity
+	recalc()
+
 	// prepare for shutdown
-	r.shutdown = sync.WaitGroup{}
 	r.shutdown.Add(1)
 	r.stop = make(chan bool)
 
@@ -298,7 +302,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 				go func(i uint32) {
 					time.Sleep(leaseTime)
 					r.clearPartitionId(i)
-					r.emit("cleared", int(index), nil)
+					r.emit("released", int(index), nil)
 					recalc()
 				}(index)
 
@@ -312,9 +316,29 @@ func (r *AzureSharedResource) Start(ctx context.Context) {
 		}
 	}()
 
+	// increment phase
+	r.phase = rateLimiterPhaseStarted
+
+	return
 }
 
 func (r *AzureSharedResource) Stop() {
-	close(r.stop)
+
+	// only allow one phase at a time
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase == rateLimiterPhaseStopped {
+		// NOTE: there should be no need for callers to handle errors at Stop(), we will just ignore them
+		return
+	}
+
+	// signal the stop
+	if r.stop != nil {
+		close(r.stop)
+	}
 	r.shutdown.Wait()
+
+	// update the phase
+	r.phase = rateLimiterPhaseStopped
+
 }
