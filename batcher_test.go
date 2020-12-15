@@ -1,5 +1,7 @@
 package batcher_test
 
+// NOTE: please review unit-tests
+
 import (
 	"fmt"
 	"sync"

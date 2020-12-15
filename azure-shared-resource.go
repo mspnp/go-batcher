@@ -1,5 +1,7 @@
 package batcher
 
+// NOTE: please review this code which allows for sharing capacity across processes/containers
+
 import (
 	"context"
 	"fmt"
