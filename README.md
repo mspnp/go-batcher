@@ -11,45 +11,47 @@ You have an Azure Cosmos database that you have provisioned with 20k RU. Your se
 
 There are several components related to Batcher...
 
-- Batcher: You will create one Batcher for each datastore that has capacity you wish to respect. Lots of Watcher will share the same Batcher. Batchers are long-lived.
+- __Batcher__: You will create one Batcher for each datastore that has capacity you wish to respect. Lots of Watcher will share the same Batcher. Batchers are long-lived.
 
-- Operation: You will enqueue Operations into Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
+- __Operation__: You will enqueue Operations into Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
 
-- Watcher: You will create one Watcher per process that you wish to manage. The Watcher receives the batches as they become available. Watchers are short-lived. For instance, if your solution is an HTTP server, you will probably create a Watcher with each request, send your Operations to a shared Batcher, and then get batches for processing back on your Watcher. If you need to handle different types of Operations that are processed in different ways or if they have different characteristics (such as an optimal batchsize), you might create a separate Watcher for each of those use-cases.
+- __Watcher__: You will create one Watcher per process that you wish to manage. The Watcher receives the batches as they become available. Watchers are short-lived. For instance, if your solution is an HTTP server, you will probably create a Watcher with each request, send your Operations to a shared Batcher, and then get batches for processing back on your Watcher. If you need to handle different types of Operations that are processed in different ways or if they have different characteristics (such as an optimal batchsize), you might create a separate Watcher for each of those use-cases.
 
 There are also 2 rate limiters provided out-of-the-box...
 
-- ProvisionedResource: This is a simple rate limiter that has a fixed capacity per second.
+- __ProvisionedResource__: This is a simple rate limiter that has a fixed capacity per second.
 
-- AzureSharedResource: This rate limiter allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes.
+- __AzureSharedResource__: This rate limiter allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes.
 
 Some other terms will be used throughout...
 
-- Target: As Operations are enqueued or marked done in Batcher it updates a Target number which is the total cost Batcher thinks is necessary to process any outstanding Operations. In other words, as Operations are enqueued, the Target grows by the cost of that Operation. When a batch is marked done, the Target is reduced by the cost of all Operations in that batch.
+- __Target__: As Operations are enqueued or marked done in Batcher it updates a Target number which is the total cost Batcher thinks is necessary to process any outstanding Operations. In other words, as Operations are enqueued, the Target grows by the cost of that Operation. When a batch is marked done, the Target is reduced by the cost of all Operations in that batch.
 
-- Capacity: The capacity that the rate limiter has been able to procure is available via the Capacity() method or the capacity event.
+- __Capacity__: The capacity that the rate limiter has been able to procure is available via the Capacity() method or the capacity event.
 
-- MaxCapacity: When using a rate limiter the MaxCapacity is the maximum capacity that could even be provided. For AzureSharedResource, this is the total of shared capacity and reserved capacity. For ProvisionedResource, this is the capacity that was provided when New() was called.
+- __MaxCapacity__: When using a rate limiter the MaxCapacity is the maximum capacity that could even be provided. For AzureSharedResource, this is the total of shared capacity and reserved capacity. For ProvisionedResource, this is the capacity that was provided when New() was called.
 
-TODO show a diagram
+- __Partitions__: The AzureSharedResource rate limiter divides the shared capacity by a factor to determine the number of partitions to provision as blobs. If a process owns the exclusive lease on the partition blob, then it is allowed to use 1 factor of capacity. For example, if the shared capacity is 10K and the factor is 1K, then there are 10 partitions, control of each is worth 1K capacity.
+
+![topology](./images/topology.png)
 
 ## Features
 
-- Datastore Agnostic: Batcher does not process the Operations it batches, it just notifies the caller when a batch is ready for processing. This design means the solution can work with any datastore.
+- __Datastore Agnostic__: Batcher does not process the Operations it batches, it just notifies the caller when a batch is ready for processing. This design means the solution can work with any datastore.
 
-- Batching: You may specify that Operations can be batched (ex. writes) and then specify constraints, like how often Operations should be flushed, maximum batch size, datastore capacity, etc. Batcher will send you batches of Operations ready for you to process within all your constraints.
+- __Batching__: You may specify that Operations can be batched (ex. writes) and then specify constraints, like how often Operations should be flushed, maximum batch size, datastore capacity, etc. Batcher will send you batches of Operations ready for you to process within all your constraints.
 
-- Rate Limiting: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
+- __Rate Limiting__: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
 
-- Shared Capacity: Batcher supports using a rate limiter. One of the included rate limiters is AzureSharedResource which allows for sharing capacity across multiple processes/containers/replicas. Sharing capacity in this way can reduce cost.
+- __Shared Capacity__: Batcher supports using a rate limiter. One of the included rate limiters is AzureSharedResource which allows for sharing capacity across multiple processes/containers/replicas. Sharing capacity in this way can reduce cost.
 
-- Reserved Capacity: AzureSharedResource also supports a reserved capacity to improve latency. For instance, you might have 4 containers that need to share 20K RU in a Cosmos database. You might give each 2K reserved capacity and share the remaining 14K RU. This gives each process low latency up to 2K RU but allows each process to request more.
+- __Reserved Capacity__: AzureSharedResource also supports a reserved capacity to improve latency. For instance, you might have 4 containers that need to share 20K RU in a Cosmos database. You might give each 2K reserved capacity and share the remaining 14K RU. This gives each process low latency up to 2K RU but allows each process to request more.
 
-- Cost per Operation: Each Operation that you enqueue to Batcher will have an associated cost.
+- __Cost per Operation__: Each Operation that you enqueue to Batcher will have an associated cost.
 
-- Limit Retries: Commonly datastores have transient faults. You want to retry those Operations after a short time because they might succeed, but you don't want to retry them forever. Watchers can be set to enforce a maximum number of retries.
+- __Limit Retries__: Commonly datastores have transient faults. You want to retry those Operations after a short time because they might succeed, but you don't want to retry them forever. Watchers can be set to enforce a maximum number of retries.
 
-- Pause: When your datastore is getting too much pressure (throwing timeouts or too-many-requests), you can pause the Batcher for a short period of time to give it some time to catch-up.
+- __Pause__: When your datastore is getting too much pressure (throwing timeouts or too-many-requests), you can pause the Batcher for a short period of time to give it some time to catch-up.
 
 ## Usage
 
@@ -308,17 +310,39 @@ In addition, the following events can be raised by AzureSharedResource...
 
 ## Rate Limiting
 
-how does the rate limiter work
+The AzureSharedResource rate limiter works like this...
 
-TODO show a diagram
+![lease](./images/lease.png)
 
-:information_source: If you want to limit the number of Operations per second rather than on the cost of those operations. You can create all Operations with a cost of 1 and set the capacity appropriately.
+The ProvisionedResource plugs into Batcher the same way, but its capacity never changes and it has no dependency on Azure Blob Storage.
 
-## Cost
+### Rate Limiting Scenarios
 
-shared vs reserved
+There are a couple of scenarios I want to call attention to...
+
+- Reserved plus Shared Capacity: Using 100% reserved capacity reduces latency and using 100% shared capacity is very cost efficient, however, it is generally best to find a happy middle-ground - a small amount of reserved capacity and the rest as shared capacity.
+
+- Operations per Second: If you want to limit the number of Operations per second rather than on the cost of those operations. You can create all Operations with a cost of 1 and set the capacity appropriately.
+
+### Cost Savings
+
+Traditionally if you want to run multiple instances of a service, you might provision capacity in your datastore times the number of instances. For example, in Azure Cosmos, if you need 20K RU and have 4 instances, you might provision 80K RU to ensure that any node could operate at maximum capacity.
+
+Using AzureSharedResource, you might still reserve capacity per instance, but it can be a small amount. You can then share capacity across the instances. For instance, in the same scenario, you might reserve 2K RU for the 4 instances and (minimally) share an addition 18K RU ().
+
+To give a cost comparison with retail pricing in the East US region with 1 TB of capacity:
+
+- 80K RU is $4,992 per month
+
+- 26K RU is $1,768 per month
+
+### Cost Increase
+
+Using default settings, each instance of AzureSharedResource will make a single storage transaction roughly every 250 milliseconds _when it needs additional capacity_. Therefore, we can determine the maximum cost for 4 instances on an Azure Storage Account GPv2 (or Blob) as...
 
 `(4 processes) x (4 lease operations per second) x (60 seconds per minute) x (60 minutes per hour) x 730 (hours per month) / (10,000 operations per billing unit) * ($0.004 per billing unit) = ~$168 month`
+
+However, this is a maximum cost - actual costs in many cases will be much lower as there are only storage operations when additional capacity is needed.
 
 ## Guidance for FlushInterval
 
