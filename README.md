@@ -27,6 +27,10 @@ Some other terms will be used throughout...
 
 - Target: As Operations are enqueued or marked done in Batcher it updates a Target number which is the total cost Batcher thinks is necessary to process any outstanding Operations. In other words, as Operations are enqueued, the Target grows by the cost of that Operation. When a batch is marked done, the Target is reduced by the cost of all Operations in that batch.
 
+- Capacity: The capacity that the rate limiter has been able to procure is available via the Capacity() method or the capacity event.
+
+- MaxCapacity: When using a rate limiter the MaxCapacity is the maximum capacity that could even be provided. For AzureSharedResource, this is the total of shared capacity and reserved capacity. For ProvisionedResource, this is the capacity that was provided when New() was called.
+
 TODO show a diagram
 
 ## Features
@@ -47,15 +51,93 @@ TODO show a diagram
 
 - Pause: When your datastore is getting too much pressure (throwing timeouts or too-many-requests), you can pause the Batcher for a short period of time to give it some time to catch-up.
 
-## Cost
+## Usage
 
-shared vs reserved
+This code sample shows the general usage...
 
-`(4 processes) x (4 lease operations per second) x (60 seconds per minute) x (60 minutes per hour) x 730 (hours per month) / (10,000 operations per billing unit) * ($0.004 per billing unit) = ~$168 month`
+1. If you are going to use rate limiting...
 
-## Rate Limiting
+    1. Create one or more rate limiters via New() methods
 
-could have a cost of 1 to limit by a certain number of Operations per second
+    1. Provision() those rate limiters
+
+    1. Start() those rate limters
+
+1. Create one or more Batchers via New() methods
+
+1. Start() those Batchers
+
+1. As you need to process data...
+
+    1. Create a Watcher
+
+    1. Enqueue Operations into the appropriate Batcher
+
+```go
+import (
+    gobatcher "github.com/plasne/go-batcher"
+)
+
+func main() {
+
+    // start getting shared resource capacity
+    azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
+        WithMasterKey(AZBLOB_KEY).
+        WithFactor(1000)
+    resourceListener := azresource.AddListener(func(event string, val int, msg *string) {
+        switch event {
+        case "error":
+            log.Err(fmt.Errorf(*msg)).Msgf("AzureSharedResource raised the following error...")
+        }
+    })
+    defer azresource.RemoveListener(resourceListener)
+    if err := azresource.Provision(ctx); err != nil {
+        panic(err)
+    }
+    if err := azresource.Start(ctx); err != nil {
+        panic(err)
+    }
+
+    // start the batcher
+    batcher := gobatcher.NewBatcher().
+        WithRateLimiter(azresource)
+    batcherListener := batcher.AddListener(func(event string, val int, msg *string) {
+        switch event {
+        case "pause":
+            log.Debug().Msgf("batcher paused for %v ms to alleviate pressure on the datastore.", val)
+        case "audit-fail":
+            log.Debug().Msgf("batcher audit-fail: %v", *msg)
+        }
+    })
+    defer batcher.RemoveListener(batcherListener)
+    if err := batcher.Start(); err != nil {
+        panic(err)
+    }
+
+    // example of an HTTP call
+    http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
+
+        // create a batch watcher
+        watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+            // process the batch
+            done()
+        }).WithMaxAttempts(3)
+
+        // enqueue operations
+        for i := 0; i < total; i++ {
+            payload := struct{}{}
+            op := gobatcher.NewOperation(watcher, 10, payload).AllowBatch()
+            if errorOnEnqueue := batcher.Enqueue(op); errorOnEnqueue != nil {
+                panic(errorOnEnqueue)
+            }
+        }
+
+    })
+
+}
+```
+
+:information_source: There is a full sample in the [sample](/sample) folder.
 
 ## Batcher Configuration
 
@@ -68,8 +150,8 @@ batcher := NewBatcher()
 Creating with all available configuration items might look like this...
 
 ```go
-batcher := NewBatcherWithBuffer(10000).
-    WithRateLimiter(myRateLimiter).
+batcher := gobatcher.NewBatcherWithBuffer(buffer).
+    WithRateLimiter(rateLimiter).
     WithFlushInterval(100 * time.Millisecond).
     WithCapacityInterval(100 * time.Millisecond).
     WithAuditInterval(10 * time.Second).
@@ -94,22 +176,24 @@ batcher := NewBatcherWithBuffer(10000).
 
 - __ErrorOnFullBuffer__ [OPTIONAL]: Normally the Enqueue() method will block if the buffer is full, however, you can set this configuration flag if you want it to return an error instead.
 
+After creation, you must call Start() on a Batcher to begin processing. You can enqueue Operations before starting if desired (though keep in mind that there is a Buffer size and you will fill it if the Batcher is not running). When you are done using a Batcher, you can Stop() it.
+
 Creating a new Operation with all defaults might look like this...
 
 ```go
-operation := NewOperation(&watcher, cost, payload)
+operation := gobatcher.NewOperation(&watcher, cost, payload)
 ```
 
 Creating with all available configuration options might look like this...
 
 ```go
-operation := NewOperation(&watcher, cost, payload).AllowBatch()
+operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
 ```
 
 ...or...
 
 ```go
-operation := NewOperation(&watcher, cost, payload).WithBatching(true)
+operation := gobatcher.NewOperation(&watcher, cost, payload).WithBatching(true)
 ```
 
 - __Watcher__ [REQUIRED]: To create a new Operation, you must pass a reference to a Watcher. When this Operation is put into a batch, it is to this Watcher that it will be raised.
@@ -125,7 +209,7 @@ operation := NewOperation(&watcher, cost, payload).WithBatching(true)
 Creating a new Watcher with all defaults might look like this...
 
 ```go
-watcher := NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
     // your processing function goes here
     done() // marks all operations in the batch as done; reduces target
 })
@@ -134,7 +218,7 @@ watcher := NewWatcher(func(batch []*gobatcher.Operation, done func()) {
 Creating with all available configuration options might look like this...
 
 ```go
-watcher := NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
     // your processing function goes here
     done() // marks all operations in the batch as done; reduces target
 }).
@@ -149,11 +233,92 @@ watcher := NewWatcher(func(batch []*gobatcher.Operation, done func()) {
 
 - __MaxOperationTime__ [OPTIONAL]: This determines how long the system should wait for the done() function to be called on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. If MaxOperationTime is not provided on the Watcher, the Batcher MaxOperationTime is used.
 
-## Usage
+Creating a new ProvisionedResource might look like this...
 
-code samples
+```go
+resource := NewProvisionedResource(maxCapacity)
+```
+
+- __MaxCapacity__ [REQUIRED]: To create a provisioned resource, you must provide the capacity. Since the ProvisionedResource is a fixed capacity rate limiter, this value serves as both MaxCapacity and Capacity.
+
+Creating a new AzureSharedResource might look like this...
+
+```go
+resource := gobatcher.NewAzureSharedResource("acountName", "containerName", sharedCapacity).
+    WithMasterKey("masterKey")
+```
+
+- __SharedCapacity__ [REQUIRED]: To create a provisioned resource, you must provide the capacity that will be shared across all processes. Based on this and Factor, the correct number of partitions can be created in the Azure Storage Account.
+
+- __AccountName__ [REQUIRED]: The account name of the Azure Storage Account that will host the zero-byte blobs that serve as partitions for capacity.
+
+- __ContainerName__ [REQUIRED]: The container name that will host the zero-byte blobs that serve as partitions for capacity.
+
+- __MasterKey__ [REQUIRED]: There needs to be some way to authenticate access to the Azure Storage Account, right now only master keys are supported. When other methods are supported, this will become optional, but you will always require one of the available methods.
+
+- __WithFactor__ [DEFAULT: 1]: The SharedCapacity will be divided by the Factor (rounded up) to determine the number of partitions to create when Provision() is called. For example, if you have 10,200 of SharedCapacity and a Factor of 1000, then there will be 11 partitions. Whenever a partition is obtained by AzureSharedResource, it will be worth a single Factor or 1000 RU. For predictability, the SharedCapacity should always be evenly divisible by Factor. AzureSharedResource does not support more than 500 partitions.
+
+- __WithReservedCapacity__ [OPTIONAL]: You could run AzureSharedResource with only SharedCapacity, but then every time it needs to run a single operation, the latency of that operation would be increased by the time it takes to allocate a partition. To improve the latency of these one-off operations, you may reserve some capacity so it is always available. Generally, you would reserve a small capacity and share the bulk of the capacity.
+
+- __WithMaxInterval__ [DEFAULT: 500ms]: This determines the maximum time that the AzureSharedResource will wait before attempting to allocate a new partition (if one is needed). The interval is random to improve entropy, but it won't be longer than this specified time. If you want fewer storage transactions, you could increase this time, but it would slow down how quickly the AzureSharedResource can obtain new RUs.
+
+- __WithMocks__ [OPTIONAL]: For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account. See the included unit tests for examples.
+
+After creation, you must call Provision() and then Start() on any rate limiters to begin processing. When you are done using a rate limiter, you can Stop() it.
 
 ## Events
+
+Events are raised with a "name" (string), "val" (int), and "msg" (*string).
+
+The following events can be raised by Batcher...
+
+- __shutdown__: This is raised after Stop() is called on a Batcher instance.
+
+- __pause__: This is raised after Pause() is called on a Batcher instance. The val is the number of milliseconds that it was paused for.
+
+- __audit-fail__: This is raised if an error was found during the AuditInterval. The msg contains more details. Should an audit fail, there is no additional action required, the Target will automatically be remediated.
+
+- __audit-pass__: This is raised if the AuditInterval found no issues.
+
+- __audit-skip__: If the Buffer is not empty or if MaxOperationTime (on Batcher) has not been exceeded by the last batch raised, the audit will be skipped. It is normal behavior to see lots of skipped audits.
+
+The following events can be raised by ProvisionedResource and AzureSharedResource...
+
+- __shutdown__: This is raised after Stop() is called on a rate limiter instance.
+
+- __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
+
+In addition, the following events can be raised by AzureSharedResource...
+
+- __failed__: This is raised if the rate limiter fails to procure capacity. This does not indicate an error condition, it is expected that attempts to procure additional capacity will have failures. The val is the index of the partition that was not obtained.
+
+- __released__: This is raised whenever the rate limiter releases capacity. The val is the index of the partition for which the lease was released.
+
+- __allocated__: This is raised whenever the rate limiter gains capacity. The val is the index of the partition for which an exclusive lease was obtained.
+
+- __error__: This is raised if there was some unexpected error condition, such as an authentication failure when attempting to allocate a partition.
+
+- __created-container__: The Azure Storage Account must exist, but the container can be created in Provision(). This event is raised if that happens. The msg is the fully qualified path to the container.
+
+- __verified_container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
+
+- __created-blob__: During Provision(), if a zero-byte blob needs to be created for a partition, this event is raised. The val is the index of the partition created.
+
+- __verified_blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
+
+## Rate Limiting
+
+how does the rate limiter work
+
+TODO show a diagram
+
+:information_source: If you want to limit the number of Operations per second rather than on the cost of those operations. You can create all Operations with a cost of 1 and set the capacity appropriately.
+
+## Cost
+
+shared vs reserved
+
+`(4 processes) x (4 lease operations per second) x (60 seconds per minute) x (60 minutes per hour) x 730 (hours per month) / (10,000 operations per billing unit) * ($0.004 per billing unit) = ~$168 month`
 
 ## Guidance for FlushInterval
 

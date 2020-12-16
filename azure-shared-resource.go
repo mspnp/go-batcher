@@ -117,7 +117,7 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	count := int(math.Ceil(float64(r.sharedCapacity) / float64(r.factor)))
 	if count > 500 {
 		err = PartitionsOutOfRangeError{
-			MaxCapacity:    r.sharedCapacity,
+			MaxCapacity:    r.MaxCapacity(),
 			Factor:         r.factor,
 			PartitionCount: count,
 		}

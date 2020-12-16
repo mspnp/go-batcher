@@ -3,6 +3,7 @@ package batcher
 import "context"
 
 type ProvisionedResource struct {
+	eventer
 	maxCapacity uint32
 }
 
@@ -29,10 +30,10 @@ func (r *ProvisionedResource) GiveMe(target uint32) {
 }
 
 func (r *ProvisionedResource) Start(ctx context.Context) error {
-	// nothing to do
+	r.emit("capacity", int(r.maxCapacity), nil)
 	return nil
 }
 
 func (r *ProvisionedResource) Stop() {
-	// nothing to do
+	r.emit("shutdown", 0, nil)
 }
