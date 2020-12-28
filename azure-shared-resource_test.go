@@ -479,6 +479,23 @@ func TestGiveMe(t *testing.T) {
 		assert.Equal(t, uint32(2331), cap, "expecting the capacity to reflect 3 allocations")
 	})
 
+	t.Run("give-me does not grant above capacity", func(t *testing.T) {
+		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+			WithMocks(getMocks()).
+			WithFactor(1000).
+			WithReservedCapacity(2000).
+			WithMaxInterval(1)
+		var err error
+		err = res.Provision(ctx)
+		assert.NoError(t, err, "not expecting a provision error")
+		err = res.Start(ctx)
+		assert.NoError(t, err, "not expecting a start error")
+		res.GiveMe(200000)
+		time.Sleep(1 * time.Second)
+		cap := res.Capacity()
+		assert.Equal(t, uint32(12000), cap, "expecting the capacity to be at the maximum")
+	})
+
 }
 
 func TestAzureSRStart(t *testing.T) {

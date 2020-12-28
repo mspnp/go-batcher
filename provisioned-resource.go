@@ -30,7 +30,7 @@ func (r *ProvisionedResource) GiveMe(target uint32) {
 }
 
 func (r *ProvisionedResource) Start(ctx context.Context) error {
-	r.emit("capacity", int(r.maxCapacity), nil)
+	r.emit("capacity", int(r.MaxCapacity()), nil)
 	return nil
 }
 
