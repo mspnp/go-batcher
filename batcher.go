@@ -39,10 +39,8 @@ type Batcher struct {
 	target      uint32
 }
 
-// TODO continue documenting methods
-
-// This method creates a new Batcher. Generally you should have 1 Batcher per datastore. Commonly after calling NewBatcher() you will chain some
-// WithXXXX methods, for instance... `NewBatcher().WithRateLimiter(limiter)`
+// This method creates a new Batcher. Generally you should have 1 Batcher per datastore. Commonly after calling NewBatcher() you will chain
+// some WithXXXX methods, for instance... `NewBatcher().WithRateLimiter(limiter)`.
 func NewBatcher() *Batcher {
 	return NewBatcherWithBuffer(10000)
 }
@@ -53,37 +51,59 @@ func NewBatcherWithBuffer(maxBufferSize uint32) *Batcher {
 	return r
 }
 
-// Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore.
+// Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
+// optional; the default behavior does not rate limit.
 func (r *Batcher) WithRateLimiter(rl RateLimiter) *Batcher {
 	r.ratelimiter = rl
 	return r
 }
 
+// The FlushInterval determines how often the processing loop attempts to flush buffered Operations. The default is `100ms`. If a rate limiter
+// is being used, the interval determines the capacity that each flush has to work with. For instance, with the default 100ms and 10,000
+// available capacity, there would be 10 flushes per second, each dispatching one or more batches of Operations that aim for 1,000 total
+// capacity. If no rate limiter is used, each flush will attempt to empty the buffer.
 func (r *Batcher) WithFlushInterval(val time.Duration) *Batcher {
 	r.flushInterval = val
 	return r
 }
 
+// The CapacityInterval determines how often the processing loop asks the rate limiter for capacity by calling GiveMe(). The default is
+// `100ms`. The Batcher asks for capacity equal to every Operation's cost that has not been marked done. In other words, when you Enqueue()
+// an Operation it increments a target based on cost. When you call done() on a batch (or the MaxOperationTime is exceeded), the target is
+// decremented by the cost of all Operations in the batch. If there is no rate limiter attached, this interval does nothing.
 func (r *Batcher) WithCapacityInterval(val time.Duration) *Batcher {
 	r.capacityInterval = val
 	return r
 }
 
+// The AuditInterval determines how often the target capacity is audited to ensure it still seems legitimate. The default is `10s`. The
+// target capacity is the amount of capacity the Batcher thinks it needs to process all outstanding Operations. Only atomic operatios are
+// performed on the target and there are other failsafes such as MaxOperationTime, however, since it is critical that the target capacity
+// be correct, this is one final failsafe to ensure the Batcher isn't asking for the wrong capacity. Generally you should leave this set
+// at the default.
 func (r *Batcher) WithAuditInterval(val time.Duration) *Batcher {
 	r.auditInterval = val
 	return r
 }
 
+// The MaxOperationTime determines how long Batcher waits until marking a batch done after releasing it to the Watcher. The default is `1m`.
+// You should always call the done() func when your batch has completed processing instead of relying on MaxOperationTime. The MaxOperationTime
+// on Batcher will be superceded by MaxOperationTime on Watcher if provided.
 func (r *Batcher) WithMaxOperationTime(val time.Duration) *Batcher {
 	r.maxOperationTime = val
 	return r
 }
 
+// The PauseTime determines how long Batcher suspends the processing loop once Pause() is called. The default is `500ms`. Typically, Pause()
+// is called because errors are being received from the datastore such as TooManyRequests or Timeout. Pausing hopefully allows the datastore
+// to catch up without making the problem worse.
 func (r *Batcher) WithPauseTime(val time.Duration) *Batcher {
 	r.pauseTime = val
 	return r
 }
 
+// Setting this option changes Enqueue() such that it throws an error if the buffer is full. Normal behavior is for the Enqueue() func to
+// block until it is able to add to the buffer.
 func (r *Batcher) WithErrorOnFullBuffer() *Batcher {
 	r.errorOnFullBuffer = true
 	return r
@@ -107,6 +127,7 @@ func (r *Batcher) applyDefaults() {
 	}
 }
 
+// Call this method to add an Operation into the buffer.
 func (r *Batcher) Enqueue(op *Operation) error {
 
 	// ensure an operation was provided
@@ -147,6 +168,8 @@ func (r *Batcher) Enqueue(op *Operation) error {
 	return nil
 }
 
+// Call this method when your datastore is throwing transient errors. This pauses the processing loop to ensure that you are not flooding
+// the datastore with additional data it cannot process making the situation worse.
 func (r *Batcher) Pause() {
 
 	// ensure pausing only happens when it is running
@@ -183,10 +206,14 @@ func (r *Batcher) resume() {
 	}
 }
 
+// This tells you how many operations are still in the buffer. This does not include operations that have been sent back to the Watcher as part
+// of a batch for processing.
 func (r *Batcher) OperationsInBuffer() uint32 {
 	return uint32(len(r.buffer))
 }
 
+// This tells you how much capacity the Batcher believes it needs to process everything outstanding. Outstanding operations include those in
+// the buffer and operations and any that have been sent as a batch but not marked done yet.
 func (r *Batcher) NeedsCapacity() uint32 {
 	return r.getTarget()
 }
@@ -220,6 +247,8 @@ func (r *Batcher) incTarget(val int) {
 	} // else is val=0, do nothing
 }
 
+// Call this method to start the processing loop. The processing loop requests capacity at the CapacityInterval, organizes operations into
+// batches at the FlushInterval, and audits the capacity target at the AuditInterval.
 func (r *Batcher) Start() (err error) {
 
 	// only allow one phase at a time
@@ -303,7 +332,6 @@ func (r *Batcher) Start() (err error) {
 		}()
 
 		// loop
-		var count int64 = 0
 		for {
 			select {
 
@@ -388,7 +416,6 @@ func (r *Batcher) Start() (err error) {
 				for batch := range batches {
 					flush(batch)
 				}
-				count++
 
 			}
 		}
@@ -401,6 +428,7 @@ func (r *Batcher) Start() (err error) {
 	return
 }
 
+// Call this method to stop the processing loop. You may not restart after stopping.
 func (r *Batcher) Stop() {
 
 	// only allow one phase at a time

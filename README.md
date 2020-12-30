@@ -59,6 +59,18 @@ Some other terms will be used throughout...
 
 - __Pause__: When your datastore is getting too much pressure (throwing timeouts or too-many-requests), you can pause the Batcher for a short period of time to give it some time to catch-up.
 
+## Simple Explanation
+
+1. A Batcher is created for a datastore. It may be assigned a rate limiter.
+
+1. A user creates a Watcher, then enqueues Operations into the Batcher.
+
+1. In the Batcher processing loop, the CapacityInterval asks for capacity from the rate limiter to process the Operations.
+
+1. In the Batcher processing loop, the FlushInterval organizes Operations into batches and raises them back to the Watchers.
+
+1. The user performs the queries as batches are raised.
+
 ## Usage
 
 This code sample shows the general usage...
@@ -349,8 +361,6 @@ Using default settings, each instance of AzureSharedResource will make a single 
 `(4 processes) x (4 lease operations per second) x (60 seconds per minute) x (60 minutes per hour) x 730 (hours per month) / (10,000 operations per billing unit) * ($0.004 per billing unit) = ~$168 month`
 
 However, this is a maximum cost - actual costs in many cases will be much lower as there are only storage operations when additional capacity is needed.
-
-## Guidance for FlushInterval
 
 ## Areas for improvement
 
