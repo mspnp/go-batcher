@@ -1,5 +1,7 @@
 package batcher
 
+// NOTE: please review this code which organizes operations into batches based on criteria
+
 import (
 	"sync"
 	"time"
