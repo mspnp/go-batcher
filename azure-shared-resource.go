@@ -41,6 +41,12 @@ type AzureSharedResource struct {
 	partitions []*string
 }
 
+// This function should be called to create a new AzureSharedResource. The accountName and containerName refer to the details
+// of an Azure Storage Account and container that the lease blobs can be created in. If multiple processes are sharing the same
+// capacity, they should all point to the same container. The sharedCapacity parameter is the maximum shared capacity for the
+// resource. For example, if you provision a Cosmos database with 20k RU, you might set sharedCapacity to 20,000. Capacity is renewed
+// every 1 second. Commonly after calling NewAzureSharedResource() you will chain some WithXXXX methods, for instance...
+// `NewAzureSharedResource().WithMasterKey(key)`.
 func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) *AzureSharedResource {
 	res := &AzureSharedResource{
 		sharedCapacity: sharedCapacity,
@@ -50,6 +56,7 @@ func NewAzureSharedResource(accountName, containerName string, sharedCapacity ui
 	return res
 }
 
+// This allows you to provide mocked objects for container and blob for unit tests.
 func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMocks(container, blob)
@@ -57,6 +64,8 @@ func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBl
 	return r
 }
 
+// You must provide credentials for the AzureSharedResource to access the Azure Storage Account. Currently, the only supported method
+// is to provide a read/write key via WithMasterKey(). This method is required unless you calling WithMocks().
 func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMasterKey(val)
@@ -64,21 +73,33 @@ func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 	return r
 }
 
+// You may provide a factor that determines how much capacity each partition is worth. For instance, if you provision a Cosmos database
+// with 20k RU, you might use a factor of 1000, meaning 20 partitions would be created, each worth 1k RU. If not provided, the factor
+// defaults to `1`. There is a limit of 500 partitions, so if you have a shared capacity in excess of 500, you must provide a factor.
 func (r *AzureSharedResource) WithFactor(val uint32) *AzureSharedResource {
 	r.factor = val
 	return r
 }
 
+// You may provide a reserved capacity. The capacity is always available to the rate limiter and is in addition to the shared capacity.
+// For instance, if you have 4 processes and provision a Cosmos database with 28k RU, you might give each process 2,000 reserved capacity
+// and 20,000 shared capacity. Any of the processes could obtain a maximum of 22,000 capacity. Capacity is renewed every 1 second.
+// Generally you use reserved capacity to reduce your latency - you no longer have to wait on a partition to be acquired in order to
+// process a small number of records.
 func (r *AzureSharedResource) WithReservedCapacity(val uint32) *AzureSharedResource {
 	r.reservedCapacity = val
 	return r
 }
 
+// The rate limiter will attempt to obtain an exclusive lease on a partition (when needed) every so often. The interval is random to
+// reduce the number of collisions and to provide an equal opportunity for processes to compete for partitions. This setting determines
+// the maximum amount of time between intervals. It defaults to `500` and is measured in milliseconds.
 func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 	r.maxInterval = val
 	return r
 }
 
+// Call this method before calling Start() to provision any needed partition blobs in the configured Azure Storage Account and container.
 func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 
 	// only allow one phase at a time
@@ -136,10 +157,12 @@ func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
 	return
 }
 
+// This returns the maximum capacity that could ever be obtained by the rate limiter. It is `SharedCapacity + ReservedCapacity`.
 func (r *AzureSharedResource) MaxCapacity() uint32 {
 	return r.sharedCapacity + r.reservedCapacity
 }
 
+// This returns the current allocated capacity. It is `NumberOfPartitionsControlled x Factor + ReservedCapacity`.
 func (r *AzureSharedResource) Capacity() uint32 {
 	allocatedCapacity := atomic.LoadUint32(&r.capacity)
 	return allocatedCapacity + r.reservedCapacity
@@ -167,6 +190,10 @@ func (r *AzureSharedResource) calc() (total uint32) {
 	return
 }
 
+// You should call GiveMe() to update the capacity you are requesting. You will always specify the new amount of capacity you require.
+// For instance, if you have a large queue of records to process, you might call GiveMe() every time new records are added to the queue
+// and every time a batch is completed. Another common pattern is to call GiveMe() on a timer to keep it generally consistent with the
+// capacity you need.
 func (r *AzureSharedResource) GiveMe(target uint32) {
 
 	// reduce capacity request by reserved capacity
@@ -239,6 +266,8 @@ func (r *AzureSharedResource) clearPartitionId(index uint32) {
 
 }
 
+// Call this method to start the processing loop. It must be called after Provision(). The processing loop runs on a random interval
+// not to exceed MaxInterval and attempts to obtain an exclusive lease on blob partitions to fulfill the capacity requests.
 func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 
 	// only allow one phase at a time
@@ -324,6 +353,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 	return
 }
 
+// Call this method to stop the processing loop. You may not restart after stopping.
 func (r *AzureSharedResource) Stop() {
 
 	// only allow one phase at a time

@@ -87,6 +87,7 @@ func TestEnqueue(t *testing.T) {
 	})
 
 	t.Run("operations cannot be attempted more than x times", func(t *testing.T) {
+		// NOTE: this test works by recursively enqueuing the same operation over and over again until it fails
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond)
 		err := batcher.Start()
