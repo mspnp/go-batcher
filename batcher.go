@@ -241,8 +241,6 @@ func (r *Batcher) Start() (err error) {
 	// apply defaults
 	r.applyDefaults()
 
-	// TODO update the documentation
-
 	// start the timers
 	capacityTimer := time.NewTicker(r.capacityInterval)
 	flushTimer := time.NewTicker(r.flushInterval)
