@@ -21,8 +21,8 @@ type blockBlobURLMock struct {
 	mock.Mock
 }
 
-func (b *blockBlobURLMock) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap) (*azblob.BlockBlobUploadResponse, error) {
-	args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags)
+func (b *blockBlobURLMock) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap, clientKeyOpts azblob.ClientProvidedKeyOptions) (*azblob.BlockBlobUploadResponse, error) {
+	args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags, clientKeyOpts)
 	return nil, args.Error(1)
 }
 
@@ -78,7 +78,7 @@ func getMocks() (*containerURLMock, *blockBlobURLMock) {
 
 	// build blob
 	blob := new(blockBlobURLMock)
-	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
 	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
