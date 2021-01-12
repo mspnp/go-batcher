@@ -116,7 +116,7 @@ func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int)
 				IfNoneMatch: "*",
 			},
 		}
-		_, err = blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil)
+		_, err = blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			if serr, ok := err.(azblob.StorageError); ok {
 				switch serr.ServiceCode() {
