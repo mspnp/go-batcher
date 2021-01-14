@@ -104,7 +104,7 @@ func main() {
     azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
         WithMasterKey(AZBLOB_KEY).
         WithFactor(1000)
-    resourceListener := azresource.AddListener(func(event string, val int, msg *string) {
+    resourceListener := azresource.AddListener(func(event string, val int, msg *string, metadata interface{}) {
         switch event {
         case "error":
             log.Err(fmt.Errorf(*msg)).Msgf("AzureSharedResource raised the following error...")
@@ -121,7 +121,7 @@ func main() {
     // start the batcher
     batcher := gobatcher.NewBatcher().
         WithRateLimiter(azresource)
-    batcherListener := batcher.AddListener(func(event string, val int, msg *string) {
+    batcherListener := batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
         switch event {
         case "pause":
             log.Debug().Msgf("batcher paused for %v ms to alleviate pressure on the datastore.", val)
@@ -195,6 +195,8 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
 - __PauseTime__ [DEFAULT: 500ms]: This determines how long the FlushInterval, CapacityInterval, and AuditIntervals are paused when Batcher.Pause() is called. Typically you would pause because the datastore cannot keep up with the volume of requests (if it happens maybe adjust your rate limiter).
 
 - __ErrorOnFullBuffer__ [OPTIONAL]: Normally the Enqueue() method will block if the buffer is full, however, you can set this configuration flag if you want it to return an error instead.
+
+- __WithEmitBatch__ [OPTIONAL]: DO NOT USE IN PRODUCTION. For unit testing it may be useful to batches that are raised across all Watchers. Setting this flag causes a "batch" event to be emitted with the operations in a batch set as the metadata (see the sample). You would not want this in production because it will diminish performance but it will also allow anyone with access to the batcher to see operations raised whether they have access to the Watcher or not.
 
 After creation, you must call Start() on a Batcher to begin processing. You can enqueue Operations before starting if desired (though keep in mind that there is a Buffer size and you will fill it if the Batcher is not running). When you are done using a Batcher, you can Stop() it.
 
