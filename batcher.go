@@ -25,6 +25,7 @@ type Batcher struct {
 	maxOperationTime  time.Duration
 	pauseTime         time.Duration
 	errorOnFullBuffer bool
+	emitBatch         bool
 
 	// used for internal operations
 	buffer chan *Operation
@@ -108,6 +109,12 @@ func (r *Batcher) WithPauseTime(val time.Duration) *Batcher {
 // block until it is able to add to the buffer.
 func (r *Batcher) WithErrorOnFullBuffer() *Batcher {
 	r.errorOnFullBuffer = true
+	return r
+}
+
+// DO NOT SET THIS IN PRODUCTION. For unit tests, it may be beneficial to raise an event for each batch of operations.
+func (r *Batcher) WithEmitBatch() *Batcher {
+	r.emitBatch = true
 	return r
 }
 
@@ -277,6 +284,11 @@ func (r *Batcher) Start() (err error) {
 
 	// define the func for flushing a batch
 	var lastFlushWithRecords time.Time
+	raise := func(operations []*Operation) {
+		if r.emitBatch && len(operations) > 0 {
+			r.emit("batch", len(operations), nil, operations)
+		}
+	}
 	call := func(watcher *Watcher, operations []*Operation) {
 		if watcher.onReady != nil && len(operations) > 0 {
 			lastFlushWithRecords = time.Now()
@@ -312,6 +324,7 @@ func (r *Batcher) Start() (err error) {
 		}
 	}
 	flush := func(watcher *Watcher) {
+		raise(watcher.operations)
 		call(watcher, watcher.operations)
 		watcher.clear()
 	}
@@ -329,7 +342,7 @@ func (r *Batcher) Start() (err error) {
 			flushTimer.Stop()
 			auditTimer.Stop()
 			close(r.buffer)
-			r.emit("shutdown", 0, nil)
+			r.emit("shutdown", 0, nil, nil)
 			r.shutdown.Done()
 		}()
 
@@ -343,29 +356,29 @@ func (r *Batcher) Start() (err error) {
 
 			case <-r.pause:
 				// pause; typically this is requested because there is too much pressure on the datastore
-				r.emit("pause", int(r.pauseTime.Milliseconds()), nil)
+				r.emit("pause", int(r.pauseTime.Milliseconds()), nil, nil)
 				time.Sleep(r.pauseTime)
 				r.resume()
-				r.emit("resume", 0, nil)
+				r.emit("resume", 0, nil, nil)
 
 			case <-auditTimer.C:
 				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
 				if len(r.buffer) < 1 && time.Since(lastFlushWithRecords) > r.maxOperationTime {
 					if r.trySetTargetToZero() {
 						msg := "an audit revealed that the target should be zero but was not."
-						r.emit("audit-fail", 0, &msg)
+						r.emit("audit-fail", 0, &msg, nil)
 					} else {
-						r.emit("audit-pass", 0, nil)
+						r.emit("audit-pass", 0, nil, nil)
 					}
 				} else {
-					r.emit("audit-skip", 0, nil)
+					r.emit("audit-skip", 0, nil, nil)
 				}
 
 			case <-capacityTimer.C:
 				// ask for capacity
 				if r.ratelimiter != nil {
 					request := r.NeedsCapacity()
-					r.emit("request", int(request), nil)
+					r.emit("request", int(request), nil, nil)
 					r.ratelimiter.GiveMe(request)
 				}
 

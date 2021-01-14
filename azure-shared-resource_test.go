@@ -193,7 +193,7 @@ func TestProvision(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000)
 		var created int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "created-container":
 				created += 1
@@ -214,7 +214,7 @@ func TestProvision(t *testing.T) {
 			WithMocks(container, blob).
 			WithFactor(1000)
 		var verified int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "verified-container":
 				verified += 1
@@ -256,7 +256,7 @@ func TestProvision(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000)
 		var created int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "created-blob":
 				created += 1
@@ -281,7 +281,7 @@ func TestProvision(t *testing.T) {
 				WithMocks(container, blob).
 				WithFactor(1000)
 			var verified int
-			res.AddListener(func(event string, val int, msg *string) {
+			res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 				switch event {
 				case "verified-blob":
 					verified += 1
@@ -389,7 +389,7 @@ func TestGiveMe(t *testing.T) {
 			WithReservedCapacity(2000).
 			WithMaxInterval(1)
 		var allocated int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "allocated":
 				allocated += 1
@@ -414,7 +414,7 @@ func TestGiveMe(t *testing.T) {
 			WithReservedCapacity(2000).
 			WithMaxInterval(1)
 		var allocated int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "allocated":
 				allocated += 1
@@ -439,7 +439,7 @@ func TestGiveMe(t *testing.T) {
 			WithReservedCapacity(2000).
 			WithMaxInterval(1)
 		var allocated int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "allocated":
 				allocated += 1
@@ -463,7 +463,7 @@ func TestGiveMe(t *testing.T) {
 			WithFactor(777).
 			WithMaxInterval(1)
 		var allocated int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "allocated":
 				allocated += 1
@@ -549,7 +549,7 @@ func TestAzureSRStart(t *testing.T) {
 			WithFactor(1000).
 			WithReservedCapacity(2000)
 		var count, value int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "capacity":
 				count += 1
@@ -571,7 +571,7 @@ func TestAzureSRStart(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000)
 		var allocated, released int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "allocated":
 				allocated += 1
@@ -617,7 +617,7 @@ func TestAzureSRStart(t *testing.T) {
 			WithFactor(1000).
 			WithMaxInterval(1)
 		var allocated, failed, errored int
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "allocated":
 				allocated += 1
@@ -666,7 +666,7 @@ func TestAzureSRStop(t *testing.T) {
 			WithFactor(1000).
 			WithMaxInterval(1)
 		done := make(chan bool)
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "shutdown":
 				close(done)
@@ -693,7 +693,7 @@ func TestAzureSRStop(t *testing.T) {
 			WithFactor(1000).
 			WithMaxInterval(1)
 		done := make(chan bool)
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "shutdown":
 				close(done)
@@ -717,7 +717,7 @@ func TestAzureSRStop(t *testing.T) {
 			WithFactor(1000).
 			WithMaxInterval(1)
 		count := 0
-		res.AddListener(func(event string, val int, msg *string) {
+		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			switch event {
 			case "shutdown":
 				count += 1
@@ -749,7 +749,7 @@ func TestRemoveListener(t *testing.T) {
 			WithFactor(1000).
 			WithMaxInterval(1)
 		count := 0
-		id := res.AddListener(func(event string, val int, msg *string) {
+		id := res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 			count += 1
 		})
 		var err error
