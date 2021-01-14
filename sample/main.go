@@ -72,7 +72,7 @@ func main() {
 	azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
 		WithMasterKey(AZBLOB_KEY).
 		WithFactor(1000)
-	resourceListener := azresource.AddListener(func(event string, val int, msg *string) {
+	resourceListener := azresource.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 		switch event {
 		case "shutdown":
 			log.Debug().Msgf("AzureSharedResource shutdown.")
@@ -107,7 +107,7 @@ func main() {
 	// configure the batcher
 	batcher := gobatcher.NewBatcher().
 		WithRateLimiter(azresource)
-	batcherListener := batcher.AddListener(func(event string, val int, msg *string) {
+	batcherListener := batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
 		switch event {
 		case "shutdown":
 			log.Debug().Msgf("batcher shutdown.")
@@ -119,6 +119,12 @@ func main() {
 			//log.Debug().Msgf("batcher audit-pass: no irregularities were found.")
 		case "audit-skip":
 			//log.Debug().Msgf("batcher audit-skip: the target capacity is still in flux.")
+		case "batch":
+			operations := metadata.([]*gobatcher.Operation)
+			log.Debug().Msgf("batcher raised a batch with %v operations...", val)
+			for _, op := range operations {
+				log.Debug().Msgf("...including %+v", op)
+			}
 		}
 	})
 	defer batcher.RemoveListener(batcherListener)
