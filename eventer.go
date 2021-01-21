@@ -8,16 +8,16 @@ import (
 
 type eventer struct {
 	listenerMutex sync.RWMutex
-	listeners     map[uuid.UUID]func(event string, val int, msg *string, metadata interface{})
+	listeners     map[uuid.UUID]func(event string, val int, msg string, metadata interface{})
 }
 
 type ieventer interface {
-	AddListener(fn func(event string, val int, msg *string, metadata interface{})) uuid.UUID
+	AddListener(fn func(event string, val int, msg string, metadata interface{})) uuid.UUID
 	RemoveListener(id uuid.UUID)
-	emit(event string, val int, msg *string, metadata interface{})
+	emit(event string, val int, msg string, metadata interface{})
 }
 
-func (r *eventer) AddListener(fn func(event string, val int, msg *string, metadata interface{})) uuid.UUID {
+func (r *eventer) AddListener(fn func(event string, val int, msg string, metadata interface{})) uuid.UUID {
 
 	// lock
 	r.listenerMutex.Lock()
@@ -25,7 +25,7 @@ func (r *eventer) AddListener(fn func(event string, val int, msg *string, metada
 
 	// allocate
 	if r.listeners == nil {
-		r.listeners = make(map[uuid.UUID]func(event string, val int, msg *string, metadata interface{}))
+		r.listeners = make(map[uuid.UUID]func(event string, val int, msg string, metadata interface{}))
 	}
 
 	// add a new listener
@@ -46,7 +46,7 @@ func (r *eventer) RemoveListener(id uuid.UUID) {
 
 }
 
-func (r *eventer) emit(event string, val int, msg *string, metadata interface{}) {
+func (r *eventer) emit(event string, val int, msg string, metadata interface{}) {
 
 	// lock
 	r.listenerMutex.RLock()

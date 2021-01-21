@@ -30,10 +30,10 @@ func (r *ProvisionedResource) GiveMe(target uint32) {
 }
 
 func (r *ProvisionedResource) Start(ctx context.Context) error {
-	r.emit("capacity", int(r.MaxCapacity()), nil, nil)
+	r.emit("capacity", int(r.MaxCapacity()), "", nil)
 	return nil
 }
 
 func (r *ProvisionedResource) Stop() {
-	r.emit("shutdown", 0, nil, nil)
+	r.emit("shutdown", 0, "", nil)
 }

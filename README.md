@@ -104,10 +104,10 @@ func main() {
     azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
         WithMasterKey(AZBLOB_KEY).
         WithFactor(1000)
-    resourceListener := azresource.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+    resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
         switch event {
         case "error":
-            log.Err(fmt.Errorf(*msg)).Msgf("AzureSharedResource raised the following error...")
+            log.Err(errors.New(msg)).Msgf("AzureSharedResource raised the following error...")
         }
     })
     defer azresource.RemoveListener(resourceListener)
@@ -121,12 +121,12 @@ func main() {
     // start the batcher
     batcher := gobatcher.NewBatcher().
         WithRateLimiter(azresource)
-    batcherListener := batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+    batcherListener := batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
         switch event {
         case "pause":
             log.Debug().Msgf("batcher paused for %v ms to alleviate pressure on the datastore.", val)
         case "audit-fail":
-            log.Debug().Msgf("batcher audit-fail: %v", *msg)
+            log.Debug().Msgf("batcher audit-fail: %v", msg)
         }
     })
     defer batcher.RemoveListener(batcherListener)

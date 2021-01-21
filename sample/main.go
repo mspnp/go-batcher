@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -72,7 +73,7 @@ func main() {
 	azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
 		WithMasterKey(AZBLOB_KEY).
 		WithFactor(1000)
-	resourceListener := azresource.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+	resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
 		case "shutdown":
 			log.Debug().Msgf("AzureSharedResource shutdown.")
@@ -85,11 +86,11 @@ func main() {
 		case "allocated":
 			log.Trace().Msgf("AzureSharedResource gained control of partition %v.", val)
 		case "error":
-			log.Err(fmt.Errorf(*msg)).Msgf("AzureSharedResource raised the following error...")
+			log.Err(errors.New(msg)).Msgf("AzureSharedResource raised the following error...")
 		case "created-container":
-			log.Trace().Msgf("AzureSharedResource created container %v.", *msg)
+			log.Trace().Msgf("AzureSharedResource created container %v.", msg)
 		case "verified-container":
-			log.Trace().Msgf("AzureSharedResource verified that container %v already exists.", *msg)
+			log.Trace().Msgf("AzureSharedResource verified that container %v already exists.", msg)
 		case "created-blob":
 			log.Trace().Msgf("AzureSharedResource created blob %v.", val)
 		case "verified-blob":
@@ -107,14 +108,14 @@ func main() {
 	// configure the batcher
 	batcher := gobatcher.NewBatcher().
 		WithRateLimiter(azresource)
-	batcherListener := batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+	batcherListener := batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
 		case "shutdown":
 			log.Debug().Msgf("batcher shutdown.")
 		case "pause":
 			log.Debug().Msgf("batcher paused for %v ms to alleviate pressure on the datastore.", val)
 		case "audit-fail":
-			log.Debug().Msgf("batcher audit-fail: %v", *msg)
+			log.Debug().Msgf("batcher audit-fail: %v", msg)
 		case "audit-pass":
 			//log.Debug().Msgf("batcher audit-pass: no irregularities were found.")
 		case "audit-skip":
