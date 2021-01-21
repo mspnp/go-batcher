@@ -303,7 +303,7 @@ func TestNeedsCapacity(t *testing.T) {
 			WithRateLimiter(res).
 			WithFlushInterval(1 * time.Millisecond)
 		var max int
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "request":
 				if val > max {
@@ -335,7 +335,7 @@ func TestNeedsCapacity(t *testing.T) {
 			WithRateLimiter(res).
 			WithFlushInterval(1 * time.Millisecond)
 		var max int
-		res.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "target":
 				if val > max {
@@ -383,7 +383,7 @@ func TestBatcherPause(t *testing.T) {
 			wg := sync.WaitGroup{}
 			wg.Add(2)
 			var paused, resumed time.Time
-			batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+			batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {
 				case "pause":
 					paused = time.Now()
@@ -417,7 +417,7 @@ func TestBatcherPause(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(2)
 		var paused, resumed time.Time
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "pause":
 				paused = time.Now()
@@ -454,7 +454,7 @@ func TestBatcherPause(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(2)
 		var paused, resumed time.Time
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "pause":
 				paused = time.Now()
@@ -488,7 +488,7 @@ func TestBatcherPause(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(2)
 		resumed := false
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "resume":
 				resumed = true
@@ -617,7 +617,7 @@ func TestBatcherStop(t *testing.T) {
 	t.Run("stop emits shutdown", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
 		done := make(chan bool)
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "shutdown":
 				close(done)
@@ -638,7 +638,7 @@ func TestBatcherStop(t *testing.T) {
 	t.Run("stop before start does not shutdown", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
 		done := make(chan bool)
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "shutdown":
 				close(done)
@@ -657,7 +657,7 @@ func TestBatcherStop(t *testing.T) {
 	t.Run("multiple stops shutdown only once", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
 		count := 0
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "shutdown":
 				count += 1
@@ -736,7 +736,7 @@ func TestTimers(t *testing.T) {
 				WithRateLimiter(res).
 				WithCapacityInterval(d.interval)
 			var count uint32 = 0
-			batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+			batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {
 				case "request":
 					count += 1
@@ -820,7 +820,7 @@ func TestAudit(t *testing.T) {
 			WithAuditInterval(1 * time.Millisecond).
 			WithMaxOperationTime(1 * time.Millisecond)
 		var passed, failed bool
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "audit-pass":
 				passed = true
@@ -849,7 +849,7 @@ func TestAudit(t *testing.T) {
 			WithAuditInterval(1 * time.Millisecond).
 			WithMaxOperationTime(1 * time.Millisecond)
 		failed := false
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "audit-fail":
 				failed = true
@@ -872,7 +872,7 @@ func TestAudit(t *testing.T) {
 			WithFlushInterval(1 * time.Millisecond).
 			WithAuditInterval(1 * time.Millisecond)
 		var skipped bool
-		batcher.AddListener(func(event string, val int, msg *string, metadata interface{}) {
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "audit-skip":
 				skipped = true
