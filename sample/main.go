@@ -75,25 +75,25 @@ func main() {
 		WithFactor(1000)
 	resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
-		case "shutdown":
+		case gobatcher.ShutdownEvent:
 			log.Debug().Msgf("AzureSharedResource shutdown.")
-		case "capacity":
+		case gobatcher.CapacityEvent:
 			log.Trace().Msgf("AzureSharedResource has procured %v capacity.", val)
-		case "failed":
+		case gobatcher.FailedEvent:
 			log.Trace().Msgf("AzureSharedResource failed to take control of partition %v.", val)
-		case "released":
+		case gobatcher.ReleasedEvent:
 			log.Trace().Msgf("AzureSharedResource lost control of partition %v.", val)
-		case "allocated":
+		case gobatcher.AllocatedEvent:
 			log.Trace().Msgf("AzureSharedResource gained control of partition %v.", val)
-		case "error":
+		case gobatcher.ErrorEvent:
 			log.Err(errors.New(msg)).Msgf("AzureSharedResource raised the following error...")
-		case "created-container":
+		case gobatcher.CreatedContainerEvent:
 			log.Trace().Msgf("AzureSharedResource created container %v.", msg)
-		case "verified-container":
+		case gobatcher.VerifiedContainerEvent:
 			log.Trace().Msgf("AzureSharedResource verified that container %v already exists.", msg)
-		case "created-blob":
+		case gobatcher.CreatedBlobEvent:
 			log.Trace().Msgf("AzureSharedResource created blob %v.", val)
-		case "verified-blob":
+		case gobatcher.VerifiedBlobEvent:
 			log.Trace().Msgf("AzureSharedResource verified that blob %v already exists.", val)
 		}
 	})
@@ -110,17 +110,17 @@ func main() {
 		WithRateLimiter(azresource)
 	batcherListener := batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
-		case "shutdown":
+		case gobatcher.ShutdownEvent:
 			log.Debug().Msgf("batcher shutdown.")
-		case "pause":
+		case gobatcher.PauseEvent:
 			log.Debug().Msgf("batcher paused for %v ms to alleviate pressure on the datastore.", val)
-		case "audit-fail":
+		case gobatcher.AuditFailEvent:
 			log.Debug().Msgf("batcher audit-fail: %v", msg)
-		case "audit-pass":
+		case gobatcher.AuditPassEvent:
 			//log.Debug().Msgf("batcher audit-pass: no irregularities were found.")
-		case "audit-skip":
+		case gobatcher.AuditSkipEvent:
 			//log.Debug().Msgf("batcher audit-skip: the target capacity is still in flux.")
-		case "batch":
+		case gobatcher.BatchEvent:
 			operations := metadata.([]*gobatcher.Operation)
 			log.Debug().Msgf("batcher raised a batch with %v operations...", val)
 			for _, op := range operations {

@@ -286,7 +286,7 @@ func (r *Batcher) Start() (err error) {
 	var lastFlushWithRecords time.Time
 	raise := func(operations []*Operation) {
 		if r.emitBatch && len(operations) > 0 {
-			r.emit("batch", len(operations), "", operations)
+			r.emit(BatchEvent, len(operations), "", operations)
 		}
 	}
 	call := func(watcher *Watcher, operations []*Operation) {
@@ -342,7 +342,7 @@ func (r *Batcher) Start() (err error) {
 			flushTimer.Stop()
 			auditTimer.Stop()
 			close(r.buffer)
-			r.emit("shutdown", 0, "", nil)
+			r.emit(ShutdownEvent, 0, "", nil)
 			r.shutdown.Done()
 		}()
 
@@ -356,28 +356,28 @@ func (r *Batcher) Start() (err error) {
 
 			case <-r.pause:
 				// pause; typically this is requested because there is too much pressure on the datastore
-				r.emit("pause", int(r.pauseTime.Milliseconds()), "", nil)
+				r.emit(PauseEvent, int(r.pauseTime.Milliseconds()), "", nil)
 				time.Sleep(r.pauseTime)
 				r.resume()
-				r.emit("resume", 0, "", nil)
+				r.emit(ResumeEvent, 0, "", nil)
 
 			case <-auditTimer.C:
 				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
 				if len(r.buffer) < 1 && time.Since(lastFlushWithRecords) > r.maxOperationTime {
 					if r.trySetTargetToZero() {
-						r.emit("audit-fail", 0, "an audit revealed that the target should be zero but was not.", nil)
+						r.emit(AuditFailEvent, 0, "an audit revealed that the target should be zero but was not.", nil)
 					} else {
-						r.emit("audit-pass", 0, "", nil)
+						r.emit(AuditPassEvent, 0, "", nil)
 					}
 				} else {
-					r.emit("audit-skip", 0, "", nil)
+					r.emit(AuditSkipEvent, 0, "", nil)
 				}
 
 			case <-capacityTimer.C:
 				// ask for capacity
 				if r.ratelimiter != nil {
 					request := r.NeedsCapacity()
-					r.emit("request", int(request), "", nil)
+					r.emit(RequestEvent, int(request), "", nil)
 					r.ratelimiter.GiveMe(request)
 				}
 

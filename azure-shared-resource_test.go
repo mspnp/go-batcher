@@ -391,7 +391,7 @@ func TestGiveMe(t *testing.T) {
 		var allocated int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "allocated":
+			case gobatcher.AllocatedEvent:
 				allocated += 1
 			}
 		})
@@ -416,7 +416,7 @@ func TestGiveMe(t *testing.T) {
 		var allocated int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "allocated":
+			case gobatcher.AllocatedEvent:
 				allocated += 1
 			}
 		})
@@ -441,7 +441,7 @@ func TestGiveMe(t *testing.T) {
 		var allocated int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "allocated":
+			case gobatcher.AllocatedEvent:
 				allocated += 1
 			}
 		})
@@ -465,7 +465,7 @@ func TestGiveMe(t *testing.T) {
 		var allocated int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "allocated":
+			case gobatcher.AllocatedEvent:
 				allocated += 1
 			}
 		})
@@ -551,7 +551,7 @@ func TestAzureSRStart(t *testing.T) {
 		var count, value int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "capacity":
+			case gobatcher.CapacityEvent:
 				count += 1
 				value = val
 			}
@@ -573,9 +573,9 @@ func TestAzureSRStart(t *testing.T) {
 		var allocated, released int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "allocated":
+			case gobatcher.AllocatedEvent:
 				allocated += 1
-			case "released":
+			case gobatcher.ReleasedEvent:
 				released += 1
 			}
 		})
@@ -619,11 +619,11 @@ func TestAzureSRStart(t *testing.T) {
 		var allocated, failed, errored int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "allocated":
+			case gobatcher.AllocatedEvent:
 				allocated += 1
-			case "failed":
+			case gobatcher.FailedEvent:
 				failed += 1
-			case "error":
+			case gobatcher.ErrorEvent:
 				errored += 1
 			}
 		})
@@ -668,7 +668,7 @@ func TestAzureSRStop(t *testing.T) {
 		done := make(chan bool)
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "shutdown":
+			case gobatcher.ShutdownEvent:
 				close(done)
 			}
 		})
@@ -695,7 +695,7 @@ func TestAzureSRStop(t *testing.T) {
 		done := make(chan bool)
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "shutdown":
+			case gobatcher.ShutdownEvent:
 				close(done)
 			}
 		})
@@ -719,7 +719,7 @@ func TestAzureSRStop(t *testing.T) {
 		count := 0
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "shutdown":
+			case gobatcher.ShutdownEvent:
 				count += 1
 			}
 		})
