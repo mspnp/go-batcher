@@ -81,7 +81,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeContainerAlreadyExists:
 				err = nil // this is a legit condition
-				m.emit("verified-container", 0, ref, nil)
+				m.emit(VerifiedContainerEvent, 0, ref, nil)
 			default:
 				return
 			}
@@ -89,7 +89,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 			return
 		}
 	} else {
-		m.emit("created-container", 0, ref, nil)
+		m.emit(CreatedContainerEvent, 0, ref, nil)
 	}
 
 	return
@@ -122,7 +122,7 @@ func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int)
 				switch serr.ServiceCode() {
 				case azblob.ServiceCodeBlobAlreadyExists, azblob.ServiceCodeLeaseIDMissing:
 					err = nil // these are legit conditions
-					m.emit("verified-blob", i, "", nil)
+					m.emit(VerifiedBlobEvent, i, "", nil)
 				default:
 					return
 				}
@@ -130,7 +130,7 @@ func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int)
 				return
 			}
 		} else {
-			m.emit("created-blob", i, "", nil)
+			m.emit(CreatedBlobEvent, i, "", nil)
 		}
 	}
 
@@ -148,14 +148,14 @@ func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, i
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeLeaseAlreadyPresent:
 				// you cannot allocate a lease that is already assigned; try again in a bit
-				m.emit("failed", int(index), "", nil)
+				m.emit(FailedEvent, int(index), "", nil)
 				return
 			default:
-				m.emit("error", 0, err.Error(), nil)
+				m.emit(ErrorEvent, 0, err.Error(), nil)
 				return
 			}
 		} else {
-			m.emit("error", 0, err.Error(), nil)
+			m.emit(ErrorEvent, 0, err.Error(), nil)
 			return
 		}
 	}

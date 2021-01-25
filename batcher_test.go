@@ -337,7 +337,7 @@ func TestNeedsCapacity(t *testing.T) {
 		var max int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "target":
+			case gobatcher.TargetEvent:
 				if val > max {
 					max = val
 				}
@@ -385,10 +385,10 @@ func TestBatcherPause(t *testing.T) {
 			var paused, resumed time.Time
 			batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {
-				case "pause":
+				case gobatcher.PauseEvent:
 					paused = time.Now()
 					wg.Done()
-				case "resume":
+				case gobatcher.ResumeEvent:
 					resumed = time.Now()
 					wg.Done()
 				}
@@ -419,10 +419,10 @@ func TestBatcherPause(t *testing.T) {
 		var paused, resumed time.Time
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "pause":
+			case gobatcher.PauseEvent:
 				paused = time.Now()
 				wg.Done()
-			case "resume":
+			case gobatcher.ResumeEvent:
 				resumed = time.Now()
 				wg.Done()
 			}
@@ -456,10 +456,10 @@ func TestBatcherPause(t *testing.T) {
 		var paused, resumed time.Time
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "pause":
+			case gobatcher.PauseEvent:
 				paused = time.Now()
 				wg.Done()
-			case "resume":
+			case gobatcher.ResumeEvent:
 				resumed = time.Now()
 				wg.Done()
 			}
@@ -490,7 +490,7 @@ func TestBatcherPause(t *testing.T) {
 		resumed := false
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "resume":
+			case gobatcher.ResumeEvent:
 				resumed = true
 				wg.Done()
 			}
@@ -619,7 +619,7 @@ func TestBatcherStop(t *testing.T) {
 		done := make(chan bool)
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "shutdown":
+			case gobatcher.ShutdownEvent:
 				close(done)
 			}
 		})
@@ -640,7 +640,7 @@ func TestBatcherStop(t *testing.T) {
 		done := make(chan bool)
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "shutdown":
+			case gobatcher.ShutdownEvent:
 				close(done)
 			}
 		})
@@ -659,7 +659,7 @@ func TestBatcherStop(t *testing.T) {
 		count := 0
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "shutdown":
+			case gobatcher.ShutdownEvent:
 				count += 1
 			}
 		})
@@ -738,7 +738,7 @@ func TestTimers(t *testing.T) {
 			var count uint32 = 0
 			batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {
-				case "request":
+				case gobatcher.RequestEvent:
 					count += 1
 				}
 			})
@@ -822,9 +822,9 @@ func TestAudit(t *testing.T) {
 		var passed, failed bool
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "audit-pass":
+			case gobatcher.AuditPassEvent:
 				passed = true
-			case "audit-fail":
+			case gobatcher.AuditFailEvent:
 				failed = true
 			}
 		})
@@ -851,7 +851,7 @@ func TestAudit(t *testing.T) {
 		failed := false
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "audit-fail":
+			case gobatcher.AuditFailEvent:
 				failed = true
 			}
 		})
@@ -874,7 +874,7 @@ func TestAudit(t *testing.T) {
 		var skipped bool
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "audit-skip":
+			case gobatcher.AuditSkipEvent:
 				skipped = true
 			}
 		})

@@ -106,7 +106,7 @@ func main() {
         WithFactor(1000)
     resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
         switch event {
-        case "error":
+        case gobatcher.ErrorsEvent:
             log.Err(errors.New(msg)).Msgf("AzureSharedResource raised the following error...")
         }
     })
@@ -123,9 +123,9 @@ func main() {
         WithRateLimiter(azresource)
     batcherListener := batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
         switch event {
-        case "pause":
+        case gobatcher.PauseEvent:
             log.Debug().Msgf("batcher paused for %v ms to alleviate pressure on the datastore.", val)
-        case "audit-fail":
+        case gobatcher.AuditFailEvent:
             log.Debug().Msgf("batcher audit-fail: %v", msg)
         }
     })

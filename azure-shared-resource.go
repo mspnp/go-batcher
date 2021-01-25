@@ -207,7 +207,7 @@ func (r *AzureSharedResource) GiveMe(target uint32) {
 	actual := math.Ceil(float64(target) / float64(r.factor))
 
 	// raise event
-	r.emit("target", int(target), "", nil)
+	r.emit(TargetEvent, int(target), "", nil)
 
 	// store
 	atomic.StoreUint32(&r.target, uint32(actual))
@@ -282,7 +282,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 	recalc := func() {
 		go func() {
 			capacity := r.calc()
-			r.emit("capacity", int(capacity+r.reservedCapacity), "", nil)
+			r.emit(CapacityEvent, int(capacity+r.reservedCapacity), "", nil)
 		}()
 	}
 
@@ -298,7 +298,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 
 		// shutdown
 		defer func() {
-			r.emit("shutdown", 0, "", nil)
+			r.emit(ShutdownEvent, 0, "", nil)
 			r.shutdown.Done()
 		}()
 
@@ -333,13 +333,13 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 				go func(i uint32) {
 					time.Sleep(leaseTime)
 					r.clearPartitionId(i)
-					r.emit("released", int(index), "", nil)
+					r.emit(ReleasedEvent, int(index), "", nil)
 					recalc()
 				}(index)
 
 				// mark the partition as allocated
 				r.setPartitionId(index, id)
-				r.emit("allocated", int(index), "", nil)
+				r.emit(AllocatedEvent, int(index), "", nil)
 				recalc()
 
 			}
