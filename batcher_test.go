@@ -92,10 +92,13 @@ func TestEnqueue(t *testing.T) {
 			WithFlushInterval(1 * time.Millisecond)
 		err := batcher.Start()
 		assert.NoError(t, err, "expecting no errors on startup")
+		var mu sync.Mutex
 		attempts := 0
 		func() {
 			var op *gobatcher.Operation
 			enqueue := func() {
+				mu.Lock()
+				defer mu.Unlock()
 				attempts++
 				if eerr := batcher.Enqueue(op); eerr != nil {
 					if eerr != nil {
@@ -116,6 +119,8 @@ func TestEnqueue(t *testing.T) {
 			enqueue()
 			time.Sleep(100 * time.Millisecond)
 		}()
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Equal(t, 4, attempts, "expect enqueue will be accepted 3 times, but fail on the 4th")
 	})
 
@@ -130,17 +135,15 @@ func TestEnqueue(t *testing.T) {
 			func() {
 				count := 0
 				watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
-					func() {
-						updateCountersMutex.Lock()
-						defer updateCountersMutex.Unlock()
-						for _, entry := range batch {
-							count++
-							if entry.Attempt() > attempts {
-								attempts = entry.Attempt()
-							}
+					defer done()
+					updateCountersMutex.Lock()
+					defer updateCountersMutex.Unlock()
+					for _, entry := range batch {
+						count++
+						if entry.Attempt() > attempts {
+							attempts = entry.Attempt()
 						}
-					}()
-					done()
+					}
 					if count > 3 {
 						return
 					}
@@ -160,6 +163,8 @@ func TestEnqueue(t *testing.T) {
 				assert.NoError(t, err, "expecting no errors on startup")
 				time.Sleep(100 * time.Millisecond)
 			}()
+			updateCountersMutex.Lock()
+			defer updateCountersMutex.Unlock()
 			assert.Equal(t, uint32(4), attempts, "expecting 4 attempts were made (even though max is 1) because enqueue happened before processing")
 		})
 	}
@@ -302,10 +307,13 @@ func TestNeedsCapacity(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithRateLimiter(res).
 			WithFlushInterval(1 * time.Millisecond)
+		var mu sync.Mutex
 		var max int
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case "request":
+				mu.Lock()
+				defer mu.Unlock()
 				if val > max {
 					max = val
 				}
@@ -324,6 +332,8 @@ func TestNeedsCapacity(t *testing.T) {
 		err = batcher.Start()
 		assert.NoError(t, err, "expecting no error on start")
 		time.Sleep(200 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
 	})
 
@@ -334,10 +344,13 @@ func TestNeedsCapacity(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithRateLimiter(res).
 			WithFlushInterval(1 * time.Millisecond)
+		var mu sync.Mutex
 		var max int
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.TargetEvent:
+				mu.Lock()
+				defer mu.Unlock()
 				if val > max {
 					max = val
 				}
@@ -356,6 +369,8 @@ func TestNeedsCapacity(t *testing.T) {
 		err = batcher.Start()
 		assert.NoError(t, err, "expecting no error on start")
 		time.Sleep(200 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
 	})
 
@@ -607,7 +622,7 @@ func TestBatcherStart(t *testing.T) {
 		err := batcher.Start()
 		assert.NoError(t, err, "not expecting an startup error")
 		time.Sleep(100 * time.Millisecond)
-		assert.Equal(t, uint32(3), count, "expect 3 batches")
+		assert.Equal(t, uint32(3), atomic.LoadUint32(&count), "expect 3 batches")
 	})
 
 }
@@ -656,11 +671,11 @@ func TestBatcherStop(t *testing.T) {
 
 	t.Run("multiple stops shutdown only once", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
-		count := 0
+		var count uint32
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.ShutdownEvent:
-				count += 1
+				atomic.AddUint32(&count, 1)
 			}
 		})
 		err := batcher.Start()
@@ -672,7 +687,7 @@ func TestBatcherStop(t *testing.T) {
 			batcher.Stop()
 		}()
 		time.Sleep(1 * time.Second)
-		assert.Equal(t, 1, count, "expecting only a single shutdown")
+		assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting only a single shutdown")
 	})
 
 }
@@ -719,7 +734,7 @@ func TestTimers(t *testing.T) {
 			err := batcher.Start()
 			assert.NoError(t, err, "not expecting a start error")
 			time.Sleep(d.wait)
-			assert.Equal(t, d.expect, count, "expecting %v operations to be completed given the %v interval and capacity for only a single operation", d.interval, d.expect)
+			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v operations to be completed given the %v interval and capacity for only a single operation", d.interval, d.expect)
 		})
 	}
 
@@ -739,7 +754,7 @@ func TestTimers(t *testing.T) {
 			batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {
 				case gobatcher.RequestEvent:
-					count += 1
+					atomic.AddUint32(&count, 1)
 				}
 			})
 			watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
@@ -751,7 +766,7 @@ func TestTimers(t *testing.T) {
 			err = batcher.Start()
 			assert.NoError(t, err, "not expecting a start error")
 			time.Sleep(d.wait)
-			assert.Equal(t, d.expect, count, "expecting %v capacity requests given the %v interval and capacity for only a single operation", d.interval, d.expect)
+			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v capacity requests given the %v interval and capacity for only a single operation", d.interval, d.expect)
 		})
 	}
 
@@ -819,13 +834,13 @@ func TestAudit(t *testing.T) {
 			WithFlushInterval(1 * time.Millisecond).
 			WithAuditInterval(1 * time.Millisecond).
 			WithMaxOperationTime(1 * time.Millisecond)
-		var passed, failed bool
+		var passed, failed uint32
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AuditPassEvent:
-				passed = true
+				atomic.AddUint32(&passed, 1)
 			case gobatcher.AuditFailEvent:
-				failed = true
+				atomic.AddUint32(&failed, 1)
 			}
 		})
 		watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
@@ -838,8 +853,8 @@ func TestAudit(t *testing.T) {
 		err = batcher.Start()
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(10 * time.Millisecond)
-		assert.True(t, passed, "expecting audit-pass because done() was called before max-operation-time (1m default)")
-		assert.False(t, failed, "expecting no audit-fail messages")
+		assert.Greater(t, atomic.LoadUint32(&passed), uint32(0), "expecting audit-pass because done() was called before max-operation-time (1m default)")
+		assert.Equal(t, uint32(0), atomic.LoadUint32(&failed), "expecting no audit-fail messages")
 	})
 
 	t.Run("demonstrate an audit-fail", func(t *testing.T) {
@@ -848,11 +863,11 @@ func TestAudit(t *testing.T) {
 			WithFlushInterval(1 * time.Millisecond).
 			WithAuditInterval(1 * time.Millisecond).
 			WithMaxOperationTime(1 * time.Millisecond)
-		failed := false
+		var failed uint32
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AuditFailEvent:
-				failed = true
+				atomic.AddUint32(&failed, 1)
 			}
 		})
 		watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
@@ -864,18 +879,18 @@ func TestAudit(t *testing.T) {
 		err = batcher.Start()
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(10 * time.Millisecond)
-		assert.True(t, failed, "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
 	})
 
 	t.Run("demonstrate an audit-skip", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond).
 			WithAuditInterval(1 * time.Millisecond)
-		var skipped bool
+		var skipped uint32
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AuditSkipEvent:
-				skipped = true
+				atomic.AddUint32(&skipped, 1)
 			}
 		})
 		watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
@@ -888,7 +903,28 @@ func TestAudit(t *testing.T) {
 		err = batcher.Start()
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(10 * time.Millisecond)
-		assert.True(t, skipped, "expect that something in the buffer but max-operation-time is still valid, will cause skips")
+		assert.Greater(t, atomic.LoadUint32(&skipped), uint32(0), "expect that something in the buffer but max-operation-time is still valid, will cause skips")
 	})
 
+}
+
+func TestManualFlush(t *testing.T) {
+	var err error
+	batcher := gobatcher.NewBatcher().WithFlushInterval(10 * time.Minute)
+	err = batcher.Start()
+	assert.NoError(t, err, "not expecting a start error")
+	completed := make(chan bool, 1)
+	watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+		done()
+		completed <- true
+	})
+	op := gobatcher.NewOperation(watcher, 100, struct{}{})
+	err = batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	batcher.Flush()
+	select {
+	case <-completed:
+	case <-time.After(1 * time.Second):
+		assert.Fail(t, "expected the manual flush to have completed the batch before the timeout")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -388,11 +389,11 @@ func TestGiveMe(t *testing.T) {
 			WithFactor(1000).
 			WithReservedCapacity(2000).
 			WithMaxInterval(1)
-		var allocated int
+		var allocated uint32
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AllocatedEvent:
-				allocated += 1
+				atomic.AddUint32(&allocated, 1)
 			}
 		})
 		var err error
@@ -402,7 +403,7 @@ func TestGiveMe(t *testing.T) {
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(4000)
 		time.Sleep(1 * time.Second)
-		assert.Equal(t, 2, allocated, "expecting 2 allocations to meet the target which is above the reserved capacity")
+		assert.Equal(t, uint32(2), atomic.LoadUint32(&allocated), "expecting 2 allocations to meet the target which is above the reserved capacity")
 		cap := res.Capacity()
 		assert.Equal(t, uint32(4000), cap, "expecting the capacity to reflect the reserved capacity plus allocated capacity")
 	})
@@ -462,11 +463,11 @@ func TestGiveMe(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(777).
 			WithMaxInterval(1)
-		var allocated int
+		var allocated uint32
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AllocatedEvent:
-				allocated += 1
+				atomic.AddUint32(&allocated, 1)
 			}
 		})
 		var err error
@@ -476,7 +477,7 @@ func TestGiveMe(t *testing.T) {
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(1800)
 		time.Sleep(1 * time.Second)
-		assert.Equal(t, 3, allocated, "expecting 3 allocations because that is the lowest amount higher than the target")
+		assert.Equal(t, uint32(3), atomic.LoadUint32(&allocated), "expecting 3 allocations because that is the lowest amount higher than the target")
 		cap := res.Capacity()
 		assert.Equal(t, uint32(2331), cap, "expecting the capacity to reflect 3 allocations")
 	})
@@ -548,12 +549,12 @@ func TestAzureSRStart(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000).
 			WithReservedCapacity(2000)
-		var count, value int
+		var count, value uint32
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.CapacityEvent:
-				count += 1
-				value = val
+				atomic.AddUint32(&count, 1)
+				atomic.AddUint32(&value, uint32(val))
 			}
 		})
 		var err error
@@ -562,21 +563,21 @@ func TestAzureSRStart(t *testing.T) {
 		err = res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(100 * time.Millisecond)
-		assert.Equal(t, 1, count, "expecting 1 capacity event")
-		assert.Equal(t, 2000, value, "expecting only the reserved capacity")
+		assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting 1 capacity event")
+		assert.Equal(t, uint32(2000), atomic.LoadUint32(&value), "expecting only the reserved capacity")
 	})
 
 	t.Run("start can lease and release partitions", func(t *testing.T) {
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
 			WithMocks(getMocks()).
 			WithFactor(1000)
-		var allocated, released int
+		var allocated, released uint32
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AllocatedEvent:
-				allocated += 1
+				atomic.AddUint32(&allocated, 1)
 			case gobatcher.ReleasedEvent:
-				released += 1
+				atomic.AddUint32(&released, 1)
 			}
 		})
 		var err error
@@ -588,8 +589,8 @@ func TestAzureSRStart(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		res.GiveMe(0)
 		time.Sleep(18 * time.Second)
-		assert.Equal(t, 2, allocated, "expecting 2 allocations to meet capacity requirement")
-		assert.Equal(t, 2, released, "expecting 2 releases because more than 15 seconds have passed")
+		assert.Equal(t, uint32(2), atomic.LoadUint32(&allocated), "expecting 2 allocations to meet capacity requirement")
+		assert.Equal(t, uint32(2), atomic.LoadUint32(&released), "expecting 2 releases because more than 15 seconds have passed")
 	})
 
 	t.Run("start can lease, fail, and handle errors", func(t *testing.T) {
@@ -616,15 +617,15 @@ func TestAzureSRStart(t *testing.T) {
 			WithMocks(container, blob).
 			WithFactor(1000).
 			WithMaxInterval(1)
-		var allocated, failed, errored int
+		var allocated, failed, errored uint32
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.AllocatedEvent:
-				allocated += 1
+				atomic.AddUint32(&allocated, 1)
 			case gobatcher.FailedEvent:
-				failed += 1
+				atomic.AddUint32(&failed, 1)
 			case gobatcher.ErrorEvent:
-				errored += 1
+				atomic.AddUint32(&errored, 1)
 			}
 		})
 		var err error
@@ -634,9 +635,9 @@ func TestAzureSRStart(t *testing.T) {
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(500)
 		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, 1, allocated, "expecting 1 allocation")
-		assert.Equal(t, 1, failed, "expecting 1 failed (already leased)")
-		assert.Equal(t, 2, errored, "expecting 2 errors (unknown and unrelated)")
+		assert.Equal(t, uint32(1), atomic.LoadUint32(&allocated), "expecting 1 allocation")
+		assert.Equal(t, uint32(1), atomic.LoadUint32(&failed), "expecting 1 failed (already leased)")
+		assert.Equal(t, uint32(2), atomic.LoadUint32(&errored), "expecting 2 errors (unknown and unrelated)")
 	})
 
 	t.Run("start only allocates to max capacity", func(t *testing.T) {
@@ -716,11 +717,11 @@ func TestAzureSRStop(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000).
 			WithMaxInterval(1)
-		count := 0
+		var count uint32
 		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
 			case gobatcher.ShutdownEvent:
-				count += 1
+				atomic.AddUint32(&count, 1)
 			}
 		})
 		var err error
@@ -735,7 +736,7 @@ func TestAzureSRStop(t *testing.T) {
 			res.Stop()
 		}()
 		time.Sleep(1 * time.Second)
-		assert.Equal(t, 1, count, "expecting only a single shutdown")
+		assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting only a single shutdown")
 	})
 
 }
@@ -748,21 +749,22 @@ func TestRemoveListener(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000).
 			WithMaxInterval(1)
-		count := 0
+		var count uint32
 		id := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			count += 1
+			atomic.AddUint32(&count, 1)
 		})
 		var err error
 		err = res.Provision(ctx)
 		assert.NoError(t, err, "not expecting a provision error")
 		err = res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
-		start := count
+		var start uint32
+		atomic.AddUint32(&start, atomic.LoadUint32(&count))
 		res.RemoveListener(id)
 		res.GiveMe(10000)
 		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, start, 0, "expecting there to be some initial events")
-		assert.Equal(t, start, count, "expecting no events after removing the listener")
+		assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
+		assert.Equal(t, atomic.LoadUint32(&start), atomic.LoadUint32(&count), "expecting no events after removing the listener")
 	})
 
 }
