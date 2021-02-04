@@ -30,6 +30,7 @@ type Batcher struct {
 	// used for internal operations
 	buffer chan *Operation
 	pause  chan bool
+	flush  chan bool
 
 	// manage the phase
 	phaseMutex sync.Mutex
@@ -51,6 +52,8 @@ func NewBatcher() *Batcher {
 func NewBatcherWithBuffer(maxBufferSize uint32) *Batcher {
 	r := &Batcher{}
 	r.buffer = make(chan *Operation, maxBufferSize)
+	r.pause = make(chan bool, 1)
+	r.flush = make(chan bool, 1)
 	return r
 }
 
@@ -189,11 +192,6 @@ func (r *Batcher) Pause() {
 		return
 	}
 
-	// allocate
-	if r.pause == nil {
-		r.pause = make(chan bool, 1)
-	}
-
 	// pause
 	select {
 	case r.pause <- true:
@@ -213,6 +211,19 @@ func (r *Batcher) resume() {
 	if r.phase == batcherPhasePaused {
 		r.phase = batcherPhaseStarted
 	}
+}
+
+// Call this method to manually flush as if the flushInterval were triggered.
+func (r *Batcher) Flush() {
+
+	// flush
+	select {
+	case r.flush <- true:
+		// successfully set the flush
+	default:
+		// flush was already set
+	}
+
 }
 
 // This tells you how many operations are still in the buffer. This does not include operations that have been sent back to the Watcher as part
@@ -382,6 +393,9 @@ func (r *Batcher) Start() (err error) {
 				}
 
 			case <-flushTimer.C:
+				r.Flush()
+
+			case <-r.flush:
 				// flush a percentage of the capacity (by default 10%)
 
 				// determine the capacity
