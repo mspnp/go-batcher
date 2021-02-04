@@ -159,6 +159,12 @@ func main() {
 
 :information_source: There is a full sample in the [sample](/sample) folder.
 
+There are some additional commands that can be executed on Batcher, including...
+
+- __Pause()__: This allows you to pause the main processing loop for Batcher. For instance, no batches will be flushed, no audits will be performed, etc.
+
+- __Flush()__: You may call Flush() to queue a manual flush. It will be processed immediately, but the Flush() method is not blocking.
+
 ## Batcher Configuration
 
 Creating a new Batcher with all defaults looks like this...
@@ -309,6 +315,8 @@ The following events can be raised by ProvisionedResource and AzureSharedResourc
 - __shutdown__: This is raised after Stop() is called on a rate limiter instance.
 
 - __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
+
+- __batch__: This is raised only when WithEmitBatch has been added to Batcher and whenever a batch is raised to any Watcher. The val is the count of the operations in the batch.
 
 In addition, the following events can be raised by AzureSharedResource...
 
