@@ -148,13 +148,12 @@ func main() {
 		wg.Add(total)
 
 		// create a batch watcher
-		watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
 			len := len(batch)
 			log.Info().Msgf("inserting a batch of %v records...", len)
 			optime := rand.Intn(1000)
 			time.Sleep(time.Duration(optime) * time.Millisecond)
 			log.Info().Msgf("inserted a batch of %v records after %v ms.", len, optime)
-			done()
 			atomic.AddUint32(&completed, uint32(len))
 			for i := 0; i < len; i++ {
 				wg.Done()
@@ -167,7 +166,7 @@ func main() {
 		log.Debug().Msgf("generating %v records...", total)
 		for i := 0; i < total; i++ {
 			payload := struct{}{}
-			op := gobatcher.NewOperation(watcher, 10, payload).AllowBatch()
+			op := gobatcher.NewOperation(watcher, 10, payload, true)
 			if errorOnEnqueue := batcher.Enqueue(op); errorOnEnqueue != nil {
 				panic(errorOnEnqueue)
 			}

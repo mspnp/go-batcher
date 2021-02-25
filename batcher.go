@@ -330,11 +330,14 @@ func (r *Batcher) Start() (err error) {
 				op.MakeAttempt()
 			}
 
-			// NOTE: done() is called by the user or happens after maxOperationTime
+			// process the batch
 			waitForDone := make(chan struct{})
-			watcher.ProcessBatch(batch, func() {
-				close(waitForDone)
-			})
+			go func() {
+				defer close(waitForDone)
+				watcher.ProcessBatch(batch)
+			}()
+
+			// the batch is "done" when the ProcessBatch func() finishes or the maxOperationTime is exceeded
 			maxOperationTime := r.maxOperationTime
 			if watcher.MaxOperationTime() > 0 {
 				maxOperationTime = watcher.MaxOperationTime()

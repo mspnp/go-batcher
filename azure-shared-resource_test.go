@@ -1,7 +1,5 @@
 package batcher_test
 
-// NOTE: please review unit-tests
-
 import (
 	"context"
 	"fmt"
