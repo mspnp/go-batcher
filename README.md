@@ -138,9 +138,8 @@ func main() {
     http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
 
         // create a batch watcher
-        watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+        watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
             // process the batch
-            done()
         }).WithMaxAttempts(3)
 
         // enqueue operations
@@ -196,7 +195,7 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
 
 - __AuditInterval__ [DEFAULT: 10s]: This determines how often the Target is audited to ensure it is accurate. The Target is manipulated with atomic Operations and abandoned batches are cleaned up after MaxOperationTime so Target should always be accurate. Therefore, we should expect to only see "audit-pass" and "audit-skip" events. This audit interval is a failsafe that if the buffer is empty and the MaxOperationTime (on Batcher only; Watchers are ignored) is exceeded and the Target is greater than zero, it is reset and an "audit-fail" event is raised. Since Batcher is a long-lived process, this audit helps ensure a broken process does not monopolize SharedCapacity when it isn't needed.
 
-- __MaxOperationTime__ [DEFAULT: 1m]: This determines how long the system should wait for the done() function to be called on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. Please note there is also a MaxOperationTime on the Watcher which takes precident over this time.
+- __MaxOperationTime__ [DEFAULT: 1m]: This determines how long the system should wait for the Watcher's callback function to be completed before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. Please note there is also a MaxOperationTime on the Watcher which takes precident over this time.
 
 - __PauseTime__ [DEFAULT: 500ms]: This determines how long the FlushInterval, CapacityInterval, and AuditIntervals are paused when Batcher.Pause() is called. Typically you would pause because the datastore cannot keep up with the volume of requests (if it happens maybe adjust your rate limiter).
 
@@ -237,29 +236,27 @@ operation := gobatcher.NewOperation(&watcher, cost, payload).WithBatching(true)
 Creating a new Watcher with all defaults might look like this...
 
 ```go
-watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
     // your processing function goes here
-    done() // marks all operations in the batch as done; reduces target
 })
 ```
 
 Creating with all available configuration options might look like this...
 
 ```go
-watcher := gobatcher.NewWatcher(func(batch []*gobatcher.Operation, done func()) {
+watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
     // your processing function goes here
-    done() // marks all operations in the batch as done; reduces target
 }).
     WithMaxAttempts(3).
     WithMaxBatchSize(500).
     WithMaxOperationTime(1 * time.Minute)
 ```
 
-- __processing_func__ [REQUIRED]: To create a new Watcher, you must provide a function that accepts a batch of Operations and a done function. The provided function will be called as each batch is available for processing. As soon as you are done processing, you should call the provided done function - this will reduce the Target by the cost of all Operations in the batch. If for some reason you don't call it, they Target will be reduced after MaxOperationTime. Every time this function is called with a batch it is run as a new goroutine so anything inside could cause race conditions with the rest of your code - use atomic, sync, etc. as appropriate.
+- __processing_func__ [REQUIRED]: To create a new Watcher, you must provide a callback function that accepts a batch of Operations. The provided function will be called as each batch is available for processing. When the callback function is completed, it will reduce the Target by the cost of all Operations in the batch. If for some reason the processing is "stuck" in this function, they Target will be reduced after MaxOperationTime. Every time this function is called with a batch it is run as a new goroutine so anything inside could cause race conditions with the rest of your code - use atomic, sync, etc. as appropriate.
 
 - __MaxAttempts__ [OPTIONAL]: If there are transient errors, you can enqueue the same Operation again. If you do not provide MaxAttempts, it will allow you to enqueue as many times as you like. Instead, if you specify MaxAttempts, the Enqueue() method will return `TooManyAttemptsError{}` if you attempt to enqueue it too many times. You could check this yourself instead of just enqueuing, but this provides a simple pattern of always attempt to enqueue then handle errors.
 
-- __MaxOperationTime__ [OPTIONAL]: This determines how long the system should wait for the done() function to be called on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. If MaxOperationTime is not provided on the Watcher, the Batcher MaxOperationTime is used.
+- __MaxOperationTime__ [OPTIONAL]: This determines how long the system should wait for the callback function to be completed on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. If MaxOperationTime is not provided on the Watcher, the Batcher MaxOperationTime is used.
 
 Creating a new ProvisionedResource might look like this...
 

@@ -2,8 +2,6 @@ package batcher
 
 import "time"
 
-type WatcherProcessFunc func(ops []IOperation, done func())
-
 type IWatcher interface {
 	WithMaxAttempts(val uint32) IWatcher
 	WithMaxBatchSize(val uint32) IWatcher
@@ -11,17 +9,17 @@ type IWatcher interface {
 	MaxAttempts() uint32
 	MaxBatchSize() uint32
 	MaxOperationTime() time.Duration
-	ProcessBatch(ops []IOperation, done func())
+	ProcessBatch(ops []IOperation)
 }
 
 type Watcher struct {
 	maxAttempts      uint32
 	maxBatchSize     uint32
 	maxOperationTime time.Duration
-	onReady          WatcherProcessFunc
+	onReady          func(ops []IOperation)
 }
 
-func NewWatcher(onReady func(ops []IOperation, done func())) IWatcher {
+func NewWatcher(onReady func(batch []IOperation)) IWatcher {
 	return &Watcher{
 		onReady: onReady,
 	}
@@ -54,6 +52,6 @@ func (w *Watcher) MaxOperationTime() time.Duration {
 	return w.maxOperationTime
 }
 
-func (w *Watcher) ProcessBatch(ops []IOperation, done func()) {
-	w.onReady(ops, done)
+func (w *Watcher) ProcessBatch(batch []IOperation) {
+	w.onReady(batch)
 }

@@ -1,7 +1,5 @@
 package batcher
 
-// NOTE: please review this code which addresses using blob leases to share capacity
-
 import (
 	"bytes"
 	"context"
