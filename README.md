@@ -1,7 +1,7 @@
 
 # Batcher
 
-Datastores have performance limits and work executed against those datastores have costs in terms of memory, CPU, disk, network, and so on (whether you have quantified those costs or not). The goal of Batcher is to provide an easy way for developers to consume all available resources on the datastore without exceeding the limits.
+In the most simple case, Batcher allows you to enqueue operations which are then given back to you in a batch. However, in a more common case, datastores have performance limits and work executed against those datastores have costs in terms of memory, CPU, disk, network, and so on (whether you have quantified those costs or not). In this case, Batcher can provide an easy way for developers to consume all available resources on the datastore without exceeding the limits.
 
 Consider this example...
 
@@ -369,11 +369,21 @@ Using default settings, each instance of AzureSharedResource will make a single 
 
 However, this is a maximum cost - actual costs in many cases will be much lower as there are only storage operations when additional capacity is needed.
 
+## Determining Cost
+
+A Batcher with a rate limiter depends on each operation having a cost. The following documents provide you with assistance on determining what values you should use for cost.
+
+- [Determine costs for operations in Cosmos](./cost-in-cosmos.md)
+
+- [Determine costs for operations in a datastore that is not rate limited](./cost-in-non-rate-limited.md)
+
 ## Areas for improvement
+
+- There is currently no way to limit concurrency, but there should be. This could be implemented such that no more than "x" operations are flight at any given time.
 
 - This tool was originally designed to limit transactions against Azure Cosmos which has a cost model expressed as a single composite value (Request Unit). For datastores that might have more granular capacities, it would be nice to be able to provision Batcher with all those capacities and have an enqueue method that supported those costs. For example, memory, CPU, disk, network, etc. might all have separate capacities and individual queries might have individual costs.
 
-- There is currently no way to change capacity in the rate limiters once they are provisioned, but there is no good reason this is fixed.
+- There is currently no way to change capacity in the rate limiters once they are provisioned, but there is no identified use-case yet for this feature.
 
 - There is currently no good way to model a datastore that autoscales but might require some time to increase capacity. Ideally something that allowed for capacity to increase by "no more than x amount over y time" would helpful. This could be a rate limiter or a feature that is added to existing rate limiters.
 
