@@ -316,50 +316,44 @@ func (r *Batcher) Start() (err error) {
 
 	// define the func for flushing a batch
 	var lastFlushWithRecords time.Time
-	raise := func(batch []IOperation) {
-		if r.emitBatch && len(batch) > 0 {
-			r.emit(BatchEvent, len(batch), "", batch)
-		}
-	}
-	call := func(watcher IWatcher, batch []IOperation) {
-		lastFlushWithRecords = time.Now()
-		go func() {
-
-			// increment an attempt
-			for _, op := range batch {
-				op.MakeAttempt()
-			}
-
-			// process the batch
-			waitForDone := make(chan struct{})
-			go func() {
-				defer close(waitForDone)
-				watcher.ProcessBatch(batch)
-			}()
-
-			// the batch is "done" when the ProcessBatch func() finishes or the maxOperationTime is exceeded
-			maxOperationTime := r.maxOperationTime
-			if watcher.MaxOperationTime() > 0 {
-				maxOperationTime = watcher.MaxOperationTime()
-			}
-			select {
-			case <-waitForDone:
-			case <-time.After(maxOperationTime):
-			}
-
-			// decrement target
-			var total int = 0
-			for _, op := range batch {
-				total += int(op.Cost())
-			}
-			r.incTarget(-total)
-
-		}()
-	}
 	flush := func(watcher IWatcher, batch []IOperation) {
 		if len(batch) > 0 {
-			raise(batch)
-			call(watcher, batch)
+			if r.emitBatch {
+				r.emit(BatchEvent, len(batch), "", batch)
+			}
+			lastFlushWithRecords = time.Now()
+			go func() {
+
+				// increment an attempt
+				for _, op := range batch {
+					op.MakeAttempt()
+				}
+
+				// process the batch
+				waitForDone := make(chan struct{})
+				go func() {
+					defer close(waitForDone)
+					watcher.ProcessBatch(batch)
+				}()
+
+				// the batch is "done" when the ProcessBatch func() finishes or the maxOperationTime is exceeded
+				maxOperationTime := r.maxOperationTime
+				if watcher.MaxOperationTime() > 0 {
+					maxOperationTime = watcher.MaxOperationTime()
+				}
+				select {
+				case <-waitForDone:
+				case <-time.After(maxOperationTime):
+				}
+
+				// decrement target
+				var total int = 0
+				for _, op := range batch {
+					total += int(op.Cost())
+				}
+				r.incTarget(-total)
+
+			}()
 		}
 	}
 
