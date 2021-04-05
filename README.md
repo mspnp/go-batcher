@@ -327,11 +327,11 @@ In addition, the following events can be raised by AzureSharedResource...
 
 - __created-container__: The Azure Storage Account must exist, but the container can be created in Provision(). This event is raised if that happens. The msg is the fully qualified path to the container.
 
-- __verified_container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
+- __verified-container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
 
 - __created-blob__: During Provision(), if a zero-byte blob needs to be created for a partition, this event is raised. The val is the index of the partition created.
 
-- __verified_blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
+- __verified-blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
 
 ## Rate Limiting
 
