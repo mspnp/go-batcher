@@ -2,7 +2,6 @@ package batcher_test
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -832,23 +831,16 @@ func TestAudit(t *testing.T) {
 		assert.Equal(t, uint32(0), atomic.LoadUint32(&failed), "expecting no audit-fail messages")
 	})
 
-	t.Run("demonstrate an audit-fail", func(t *testing.T) {
+	t.Run("demonstrate an audit-fail (target)", func(t *testing.T) {
 		// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond).
 			WithAuditInterval(1 * time.Millisecond).
-			WithMaxOperationTime(1 * time.Millisecond).
-			WithMaxConcurrentBatches(1) // ensures there is both a target and inflight error
-		var failedTarget, failedInflight uint32
+			WithMaxOperationTime(1 * time.Millisecond)
+		var failed uint32
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AuditFailEvent:
-				switch {
-				case strings.Contains(msg, "target"):
-					atomic.AddUint32(&failedTarget, 1)
-				case strings.Contains(msg, "inflight"):
-					atomic.AddUint32(&failedInflight, 1)
-				}
+			if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnTarget {
+				atomic.AddUint32(&failed, 1)
 			}
 		})
 		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
@@ -860,8 +852,59 @@ func TestAudit(t *testing.T) {
 		err = batcher.Start()
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(10 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&failedTarget), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
-		assert.Greater(t, atomic.LoadUint32(&failedInflight), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+		assert.Equal(t, uint32(0), batcher.Target())
+	})
+
+	t.Run("demonstrate an audit-fail (inflight)", func(t *testing.T) {
+		// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
+		batcher := gobatcher.NewBatcher().
+			WithFlushInterval(1 * time.Millisecond).
+			WithAuditInterval(1 * time.Millisecond).
+			WithMaxOperationTime(1 * time.Millisecond).
+			WithMaxConcurrentBatches(1) // ensures there can be inflight errors
+		var failed uint32
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+			if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnInflight {
+				atomic.AddUint32(&failed, 1)
+			}
+		})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+			time.Sleep(20 * time.Millisecond)
+		}).WithMaxOperationTime(1 * time.Minute)
+		op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+		err := batcher.Enqueue(op)
+		assert.NoError(t, err, "not expecting an enqueue error")
+		err = batcher.Start()
+		assert.NoError(t, err, "not expecting a start error")
+		time.Sleep(10 * time.Millisecond)
+		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+		assert.Equal(t, uint32(0), batcher.Inflight())
+	})
+
+	t.Run("demonstrate an audit-fail (target & inflight)", func(t *testing.T) {
+		// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
+		batcher := gobatcher.NewBatcher().
+			WithFlushInterval(1 * time.Millisecond).
+			WithAuditInterval(1 * time.Millisecond).
+			WithMaxOperationTime(1 * time.Millisecond).
+			WithMaxConcurrentBatches(1) // ensures there can be inflight errors
+		var failed uint32
+		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+			if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnTargetAndInflight {
+				atomic.AddUint32(&failed, 1)
+			}
+		})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+			time.Sleep(20 * time.Millisecond)
+		}).WithMaxOperationTime(1 * time.Minute)
+		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+		err := batcher.Enqueue(op)
+		assert.NoError(t, err, "not expecting an enqueue error")
+		err = batcher.Start()
+		assert.NoError(t, err, "not expecting a start error")
+		time.Sleep(10 * time.Millisecond)
+		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
 		assert.Equal(t, uint32(0), batcher.Target())
 		assert.Equal(t, uint32(0), batcher.Inflight())
 	})

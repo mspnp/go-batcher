@@ -14,6 +14,12 @@ const (
 	batcherPhaseStopped
 )
 
+const (
+	AuditMsgFailureOnTargetAndInflight = "an audit revealed that the target and inflight should both be zero but neither was."
+	AuditMsgFailureOnTarget            = "an audit revealed that the target should be zero but was not."
+	AuditMsgFailureOnInflight          = "an audit revealed that inflight should be zero but was not."
+)
+
 type IBatcher interface {
 	ieventer
 	WithRateLimiter(rl RateLimiter) IBatcher
@@ -444,16 +450,16 @@ func (r *Batcher) Start() (err error) {
 			case <-auditTimer.C:
 				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
 				if len(r.buffer) < 1 && time.Since(lastFlushWithRecords) > r.maxOperationTime {
-					eventRaised := false
-					if !r.confirmTargetIsZero() {
-						r.emit(AuditFailEvent, 0, "an audit revealed that the target should be zero but was not.", nil)
-						eventRaised = true
-					}
-					if !r.confirmInflightIsZero() {
-						r.emit(AuditFailEvent, 0, "an audit revealed that the batches inflight should be zero but was not.", nil)
-						eventRaised = true
-					}
-					if !eventRaised {
+					targetIsZero := r.confirmTargetIsZero()
+					inflightIsZero := r.confirmInflightIsZero()
+					switch {
+					case !targetIsZero && !inflightIsZero:
+						r.emit(AuditFailEvent, 0, AuditMsgFailureOnTargetAndInflight, nil)
+					case !targetIsZero:
+						r.emit(AuditFailEvent, 0, AuditMsgFailureOnTarget, nil)
+					case !inflightIsZero:
+						r.emit(AuditFailEvent, 0, AuditMsgFailureOnInflight, nil)
+					default:
 						r.emit(AuditPassEvent, 0, "", nil)
 					}
 				} else {
