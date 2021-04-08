@@ -47,7 +47,7 @@ Some other terms will be used throughout...
 
 - __Datastore Agnostic__: Batcher does not process the Operations it batches, it just notifies the caller when a batch is ready for processing. This design means the solution can work with any datastore.
 
-- __Batching__: You may specify that Operations can be batched (ex. writes) and then specify constraints, like how often Operations should be flushed, maximum batch size, datastore capacity, etc. Batcher will send you batches of Operations ready for you to process within all your constraints.
+- __Batching__: You may specify that Operations can be batched (ex. writes) and then specify constraints, like how often Operations should be flushed, maximum batch size, maximum concurrency, datastore capacity, etc. Batcher will send you batches of Operations ready for you to process within all your constraints.
 
 - __Rate Limiting__: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
 
@@ -299,7 +299,7 @@ After creation, you must call Provision() and then Start() on any rate limiters 
 
 ## Events
 
-Events are raised with a "name" (string), "val" (int), and "msg" (*string).
+Events are raised with a "name" (string), "val" (int), "msg" (string), and metadata (interface{}).
 
 The following events can be raised by Batcher...
 
@@ -333,11 +333,11 @@ In addition, the following events can be raised by AzureSharedResource...
 
 - __created-container__: The Azure Storage Account must exist, but the container can be created in Provision(). This event is raised if that happens. The msg is the fully qualified path to the container.
 
-- __verified_container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
+- __verified-container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
 
 - __created-blob__: During Provision(), if a zero-byte blob needs to be created for a partition, this event is raised. The val is the index of the partition created.
 
-- __verified_blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
+- __verified-blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
 
 ## Rate Limiting
 
@@ -392,3 +392,5 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 - There is currently no good way to model a datastore that autoscales but might require some time to increase capacity. Ideally something that allowed for capacity to increase by "no more than x amount over y time" would helpful. This could be a rate limiter or a feature that is added to existing rate limiters.
 
 - The pause logic is a simple fixed amount of time to delay new batches, but it might be nice to have an exponential back-off.
+
+- Currently the only shared capacity rate limiter is for Azure. It would be nice to add support for Zookeeper, Consul, or etcd.
