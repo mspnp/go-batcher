@@ -30,6 +30,7 @@ type IBatcher interface {
 	WithPauseTime(val time.Duration) IBatcher
 	WithErrorOnFullBuffer() IBatcher
 	WithEmitBatch() IBatcher
+	WithEmitFlush() IBatcher
 	WithMaxConcurrentBatches(val uint32) IBatcher
 	Enqueue(op IOperation) error
 	Pause()
@@ -54,6 +55,7 @@ type Batcher struct {
 	pauseTime            time.Duration
 	errorOnFullBuffer    bool
 	emitBatch            bool
+	emitFlush            bool
 	maxConcurrentBatches uint32
 
 	// used for internal operations
@@ -149,6 +151,13 @@ func (r *Batcher) WithErrorOnFullBuffer() IBatcher {
 // DO NOT SET THIS IN PRODUCTION. For unit tests, it may be beneficial to raise an event for each batch of operations.
 func (r *Batcher) WithEmitBatch() IBatcher {
 	r.emitBatch = true
+	return r
+}
+
+// Generally you do not want this setting for production, but it can be helpful for unit tests to raise an event every time
+// a flush is started and completed.
+func (r *Batcher) WithEmitFlush() IBatcher {
+	r.emitFlush = true
 	return r
 }
 
@@ -468,7 +477,7 @@ func (r *Batcher) Start() (err error) {
 
 			case <-r.flush:
 				// flush a percentage of the capacity (by default 10%)
-				if r.emitBatch {
+				if r.emitFlush {
 					r.emit(FlushStartEvent, 0, "", nil)
 				}
 
@@ -534,7 +543,7 @@ func (r *Batcher) Start() (err error) {
 					r.processBatch(watcher, batch)
 				}
 
-				if r.emitBatch {
+				if r.emitFlush {
 					r.emit(FlushDoneEvent, 0, "", nil)
 				}
 			}

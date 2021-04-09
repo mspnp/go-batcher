@@ -967,7 +967,8 @@ type TestMaxConcurrentBatchesSuite struct {
 func (s *TestMaxConcurrentBatchesSuite) BeforeTest(suiteName, testName string) {
 	s.batcher = gobatcher.NewBatcher().
 		WithFlushInterval(10 * time.Minute).
-		WithEmitBatch()
+		WithEmitBatch().
+		WithEmitFlush()
 	switch testName {
 	case "TestBatchPacking":
 		s.batcher.WithMaxConcurrentBatches(1)
@@ -1101,18 +1102,3 @@ func (s *TestMaxConcurrentBatchesSuite) TestBatchPacking() {
 func TestMaxConcurrentBatches(t *testing.T) {
 	suite.Run(t, new(TestMaxConcurrentBatchesSuite))
 }
-
-/*
-
-
-		t.Run("an operation that needs a new batch doesn't cause other batches to be less full", func(t *testing.T) {
-			var err error
-			batcher := gobatcher.NewBatcher().
-				WithMaxConcurrentBatches(1).
-				WithFlushInterval(10 * time.Minute)
-			err = batcher.Start()
-			assert.NoError(t, err, "not expecting a start error")
-		})
-
-}
-*/
