@@ -47,7 +47,7 @@ Some other terms will be used throughout...
 
 - __Datastore Agnostic__: Batcher does not process the Operations it batches, it just notifies the caller when a batch is ready for processing. This design means the solution can work with any datastore.
 
-- __Batching__: You may specify that Operations can be batched (ex. writes) and then specify constraints, like how often Operations should be flushed, maximum batch size, maximum concurrency, datastore capacity, etc. Batcher will send you batches of Operations ready for you to process within all your constraints.
+- __Batching__: You may specify that Operations can be batched (ex. writes) and then specify constraints, like how often Operations should be flushed, maximum batch size, restricting the number of batches Inflight, datastore capacity, etc. Batcher will send you batches of Operations ready for you to process within all your constraints.
 
 - __Rate Limiting__: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
 
@@ -184,9 +184,10 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
     WithAuditInterval(10 * time.Second).
     WithMaxOperationTime(1 * time.Minute).
     WithPauseTime(500 * time.Millisecond).
+    WithMaxConcurrentBatches(10).
     WithErrorOnFullBuffer().
+    WithEmitFlush().
     WithEmitBatch().
-    WithMaxConcurrentBatches(10)
 ```
 
 - __Buffer__ [DEFAULT: 10,0000]: The buffer determines how many Operations can be enqueued at a time. When ErrorOnFullBuffer is "false" (the default), the Enqueue() method blocks until a slot is available. When ErrorOnFullBuffer is "true" an error of type `BufferFullError{}` is returned from Enqueue().
@@ -197,17 +198,19 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
 
 - __CapacityInterval__ [DEFAULT: 100ms]: This determines how often the Batcher asks the RateLimiter for capacity. Generally you should leave this alone, but you could increase it to slow down the number of storage Operations required for sharing capacity. Please be aware that this only applies to Batcher asking for capacity, it doesn't mean the rate limiter will allocate capacity any faster, just that it is being asked more often.
 
-- __AuditInterval__ [DEFAULT: 10s]: This determines how often the Target and Inflight variables are audited to ensure they are accurate. The Target is manipulated with atomic Operations and abandoned batches are cleaned up after MaxOperationTime so Target should always be accurate. Inflight is a channel and abandoned batches are cleaned up after MaxOperationTime so it should also always be accurate. Therefore, we should expect to only see "audit-pass" and "audit-skip" events. This audit interval is a failsafe that if the buffer is empty and the MaxOperationTime (on Batcher only; Watchers are ignored) is exceeded and the Target or Inflight is greater than zero, they are reset and an "audit-fail" event is raised. Since Batcher is a long-lived process, this audit helps ensure a broken process does not monopolize SharedCapacity when it isn't needed or that batches are stalled indefinately.
+- __AuditInterval__ [DEFAULT: 10s]: This determines how often the Target and Inflight variables are audited to ensure they are accurate. There are many safeguards to ensure the Target and Inflight variables are accurate, therefore, we should expect to only see "audit-pass" and "audit-skip" events. This audit interval is a failsafe that if the buffer is empty and the MaxOperationTime (on Batcher only; Watchers are ignored) is exceeded and the Target or Inflight is greater than zero, they are reset and an "audit-fail" event is raised. Batcher does nothing to terminate any operations you may be running inside the Watcher callback, it simply abandons tracking them. Since Batcher is a long-lived process, this audit helps ensure a broken process does not monopolize SharedCapacity when it isn't needed or that batches are stalled indefinately.
 
 - __MaxOperationTime__ [DEFAULT: 1m]: This determines how long the system should wait for the Watcher's callback function to be completed before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. Please note there is also a MaxOperationTime on the Watcher which takes precident over this time.
 
 - __PauseTime__ [DEFAULT: 500ms]: This determines how long the FlushInterval, CapacityInterval, and AuditIntervals are paused when Batcher.Pause() is called. Typically you would pause because the datastore cannot keep up with the volume of requests (if it happens maybe adjust your rate limiter).
 
+- __WithMaxConcurrentBatches__ [OPTIONAL]: If you specify this option, Batcher will ensure that the number of Inflight batches does not exceed this value. Batches are still only produced on the FlushInterval. When a batch is marked done, the concurrency slot is freed for another batch. If you do not specify this option, there is no limit to the number of batches that can be raised at a time (each running in a separate goroutine).
+
 - __ErrorOnFullBuffer__ [OPTIONAL]: Normally the Enqueue() method will block if the buffer is full, however, you can set this configuration flag if you want it to return an error instead.
 
-- __WithEmitBatch__ [OPTIONAL]: DO NOT USE IN PRODUCTION. For unit testing it may be useful to batches that are raised across all Watchers. Setting this flag causes a "batch" event to be emitted with the operations in a batch set as the metadata (see the sample). You would not want this in production because it will diminish performance but it will also allow anyone with access to the batcher to see operations raised whether they have access to the Watcher or not.
+- __WithEmitFlush__ [OPTIONAL]: There may be certain cases (for example, unit testing) when it is helpful to know when a flush starts (event: "flush-start") and when it is complete (event: "flush-done"). If you have a use-case for this, you can emit those events. This is off by default as this will generate a massive number of events.
 
-- __WithMaxConcurrentBatches__ [OPTIONAL]: If you specify this option, Batcher will ensure that the number of batches being processed at one time does not exceed this value. Batches are still only produced on the FlushInterval. When a batch is marked done, the concurrency slot is freed for another batch.
+- __WithEmitBatch__ [OPTIONAL]: DO NOT USE IN PRODUCTION. For unit testing it may be useful to view batches that are raised across all Watchers. Setting this flag causes a "batch" event to be emitted with the operations in a batch set as the metadata (see the sample). You would not want this in production because it will diminish performance but it will also allow anyone with access to the batcher to see operations raised whether they have access to the Watcher or not.
 
 After creation, you must call Start() on a Batcher to begin processing. You can enqueue Operations before starting if desired (though keep in mind that there is a Buffer size and you will fill it if the Batcher is not running). When you are done using a Batcher, you can Stop() it.
 
@@ -319,6 +322,10 @@ The following events can be raised by ProvisionedResource and AzureSharedResourc
 
 - __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
 
+- __flush-start__: This is raised only when WithEmitFlush has been added to Batcher and whenever a flush is started. The val, msg, and metadata are empty.
+
+- __flush-end__: This is raised only when WithEmitFlush has been added to Batcher and whenever a flush is complete. The val, msg, and metadata are empty.
+
 - __batch__: This is raised only when WithEmitBatch has been added to Batcher and whenever a batch is raised to any Watcher. The val is the count of the operations in the batch.
 
 In addition, the following events can be raised by AzureSharedResource...
@@ -393,4 +400,4 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 
 - The pause logic is a simple fixed amount of time to delay new batches, but it might be nice to have an exponential back-off.
 
-- Currently the only shared capacity rate limiter is for Azure. It would be nice to add support for Zookeeper, Consul, or etcd.
+- Currently the only shared capacity rate limiter is for Azure. It would be nice to add support for Zookeeper, Consul, etcd, redis/redsync, or similar.

@@ -35,7 +35,6 @@ type IBatcher interface {
 	Enqueue(op IOperation) error
 	Pause()
 	Flush()
-	Target() uint32
 	Inflight() uint32
 	OperationsInBuffer() uint32
 	NeedsCapacity() uint32
@@ -273,10 +272,10 @@ func (r *Batcher) OperationsInBuffer() uint32 {
 // This tells you how much capacity the Batcher believes it needs to process everything outstanding. Outstanding operations include those in
 // the buffer and operations and any that have been sent as a batch but not marked done yet.
 func (r *Batcher) NeedsCapacity() uint32 {
-	return r.Target()
+	return r.getTarget()
 }
 
-func (r *Batcher) Target() uint32 {
+func (r *Batcher) getTarget() uint32 {
 	r.targetMutex.RLock()
 	defer r.targetMutex.RUnlock()
 	return r.target

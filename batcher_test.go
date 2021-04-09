@@ -855,7 +855,7 @@ func TestAudit(t *testing.T) {
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(10 * time.Millisecond)
 		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
-		assert.Equal(t, uint32(0), batcher.Target())
+		assert.Equal(t, uint32(0), batcher.NeedsCapacity())
 	})
 
 	t.Run("demonstrate an audit-fail (inflight)", func(t *testing.T) {
@@ -907,7 +907,7 @@ func TestAudit(t *testing.T) {
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(10 * time.Millisecond)
 		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
-		assert.Equal(t, uint32(0), batcher.Target())
+		assert.Equal(t, uint32(0), batcher.NeedsCapacity())
 		assert.Equal(t, uint32(0), batcher.Inflight())
 	})
 

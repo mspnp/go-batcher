@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-// TODO add comments
-
 type IBuffer interface {
 	Size() uint32
 	Max() uint32
@@ -33,6 +31,9 @@ type links struct {
 	nxt *links
 }
 
+// FOR INTERNAL USE ONLY. This method creates a new Buffer. The Buffer is a double-linked list holding the Operations that are
+// enqueued. All methods in the Buffer are threadsafe since they can be called from Batcher.Enqueue and the Batcher main processing
+// loop which are commonly in different goroutines.
 func NewBuffer(max uint32) IBuffer {
 	lock := &sync.Mutex{}
 	return &buffer{
@@ -42,18 +43,22 @@ func NewBuffer(max uint32) IBuffer {
 	}
 }
 
+// This returns the number of Operations in the Buffer.
 func (b *buffer) Size() uint32 {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	return b.size
 }
 
+// This returns the maximum number of Operations that can be held in the Buffer.
 func (b *buffer) Max() uint32 {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	return b.max
 }
 
+// This sets the cursor position to the top of the Buffer and returns the head Operation. This method will return nil if there
+// is no head Operation. Batcher's main processing loop runs on a single thread so having a single cursor is appropriate.
 func (b *buffer) Top() IOperation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -64,6 +69,8 @@ func (b *buffer) Top() IOperation {
 	return b.cursor.op
 }
 
+// This advances the cursor position leaving the current record in the Buffer. It returns the Operation at the new cursor
+// position. This method will return nil if there are no more Operations in the Buffer.
 func (b *buffer) Skip() IOperation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -77,6 +84,8 @@ func (b *buffer) Skip() IOperation {
 	return b.cursor.op
 }
 
+// This advances the cursor position removing the current record from the Buffer. It returns the Operation at the new cursor
+// position. This method will return nil if there are no more Operations in the Buffer.
 func (b *buffer) Remove() IOperation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -106,13 +115,21 @@ func (b *buffer) Remove() IOperation {
 		b.cursor = nil
 	}
 
+	if b.size == 0 {
+		// NOTE: There should be no way to reach this panic unless there was a coding error
+		panic(errors.New("removing from empty buffer is not allowed"))
+	}
+	b.notFull.Signal()
 	b.size--
+
 	if b.cursor == nil {
 		return nil
 	}
 	return b.cursor.op
 }
 
+// This allows you to add an Operation to the tail of the Buffer. If the Buffer is full and errorOnFull is false, this method
+// is blocking until the Operation can be added. If the Buffer is full and errorOnFull is true, this method returns BufferFullError.
 func (b *buffer) Enqueue(op IOperation, errorOnFull bool) error {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -130,6 +147,7 @@ func (b *buffer) Enqueue(op IOperation, errorOnFull bool) error {
 		b.head = link
 		b.tail = link
 	case b.tail == nil:
+		// NOTE: There should be no way to reach this panic unless there was a coding error
 		panic(errors.New("a buffer tail was not found"))
 	default:
 		link := &links{prv: b.tail, op: op}
@@ -142,6 +160,7 @@ func (b *buffer) Enqueue(op IOperation, errorOnFull bool) error {
 	return nil
 }
 
+// This clears the Buffer allowing all Operations to be garbage collected.
 func (b *buffer) Clear() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
