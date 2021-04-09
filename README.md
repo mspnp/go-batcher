@@ -1,27 +1,94 @@
 
 # Batcher
 
-In the most simple case, Batcher allows you to enqueue operations which are then given back to you in a batch. However, in a more common case, datastores have performance limits and work executed against those datastores have costs in terms of memory, CPU, disk, network, and so on (whether you have quantified those costs or not). In this case, Batcher can provide an easy way for developers to consume all available resources on the datastore without exceeding the limits.
+- [Overview](#overview)
+- [Use Cases](#use-cases)
+  - [Rate limiting on datastores](#rate-limiting-on-datastores)
+  - [Cost savings - Reserved vs Shared Capacity](#cost-savings---reserved-vs-shared-capacity)
+  - [Cost control](#cost-control)
+  - [Rate limiting on other resource targets](#rate-limiting-on-other-resource-targets)
+- [Batcher Components](#batcher-components)
+  - [Terminology](#terminology)
+- [Features](#features)
+- [Workflow](#workflow)
+- [Usage](#usage)
+  - [Batcher Configuration](#batcher-configuration)
+  - [Events](#events)
+- [Rate limiting](#rate-limiting)
+  - [Scenarios](#scenarios)
+  - [Cost savings](#cost-savings)
+  - [Cost increase](#cost-increase)
+- [Determining cost](#determining-cost)
+- [Opportunities for improvement](#opportunities-for-improvement)
 
-Consider this example...
+## Overview
 
-You have an Azure Cosmos database that you have provisioned with 20k RU. Your service is in a Pod with 4 replicas on Kubernetes that need to share the capacity. Your service gets large jobs for processing, commonly 100k records or more at a time. Each record costs 10 RU. If we imagine that 2 jobs come in at the same time (1 job to each of 2 replicas), then we have 100k x 2 x 10 RU or 2m RU of work that needs to be done. Given that we have 20k capacity per second, we know that we could complete the work in 100 seconds if we could spread it out. Without something like Batcher, each process might try and send their own 100k messages in parallel and with no knowledge of the other. This would cause Cosmos to start issuing 429 TooManyRequests error messages and given the volume might even cut you off with 503 Service Unavailable error messages. Batcher solves this problem by allowing you to share the capacity across multiple replicas and controlling the flow of traffic so you don't exceed the 20k RU per second.
+Batcher is a datastore-agnostic batching and rate-limiting implementation for Go.
 
-## Terminology
+Datastores have performance limits and the work that is executed against them has costs in terms of memory, CPU, disk, network, and so on (whether you have quantified those costs or not).
 
-There are several components related to Batcher...
+Batcher, not only allows you to enqueue operations which are then given back to you in a batch, but can provide an easy way for applications to consume all available resources on a datastore without exceeding their performance limits.
 
-- __Batcher__: You will create one Batcher for each datastore that has capacity you wish to respect. Lots of Watcher will share the same Batcher. Batchers are long-lived.
+## Use Cases
 
-- __Operation__: You will enqueue Operations into Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
+Here are the most common use cases for Batcher:
 
-- __Watcher__: You will create one Watcher per process that you wish to manage. The Watcher receives the batches as they become available. Watchers are short-lived. For instance, if your solution is an HTTP server, you will probably create a Watcher with each request, send your Operations to a shared Batcher, and then get batches for processing back on your Watcher. If you need to handle different types of Operations that are processed in different ways or if they have different characteristics (such as an optimal batchsize), you might create a separate Watcher for each of those use-cases.
+### Rate limiting on datastores
+
+Consider this scenario:
+
+- You have an Azure Cosmos database that you have provisioned with 20K [Request Units (RU)](https://docs.microsoft.com/en-us/azure/cosmos-db/request-units).
+- Your service runs in a pod with 4 replicas on Kubernetes that need to share the capacity.
+- Your service gets large jobs for processing, commonly 100K records or more at a time.
+- Each record costs 10 RU.
+- If 2 jobs come in at the same time (1 job to each of 2 replicas), then we have `100K records x 2 jobs x 10 RU = 2M RU` of work that needs to be done.
+
+Given that we have capacity of 20K RU per second, we know that we could complete the work in 100 seconds if we could spread it out.
+
+However, each process might try and send their own 100K records in parallel and with no knowledge of each other. This would cause Cosmos to start issuing `429 TooManyRequests` error messages and given the volume it might even cut you off with `503 ServiceUnavailable` error messages.
+
+Batcher solves this problem by allowing you to share the capacity across multiple replicas and controlling the flow of traffic so you don't exceed the 20K RU per second.
+
+### Cost savings - Reserved vs Shared Capacity
+
+Consider this scenario:
+
+- You have an Azure Cosmos database.
+- Your service runs in a pod with 4 replicas on Kubernetes that need to share the capacity.
+- You want to ensure that each replica can operate at up to 20K RU, but without having to provision 4 * 20K RU = 80K RU.
+
+Using Batcher, you might still reserve capacity per instance, but it can be a small amount. You can then share capacity across the instances. For instance, you might reserve 2K RU for each of the 4 instances and share an addition 18K RU, allowing each instance to have capacity between 2K and 20K RU. This would require provisioning 26K RU in Cosmos instead of 80K RU.
+
+### Cost control
+
+Consider this scenario:
+
+- You have an Azure Cosmos database.
+- You have a lot of expensive reads and writes, but don't want to pay a lot for Cosmos.
+
+Batcher will ensure that you don't exceed this capacity by lengthening the time it takes for your operations to complete. Therefore, if you find that your application takes too long for operations to complete, you can increase the capacity. If you want to save money, you can decrease the capacity.
+
+### Rate limiting on other resource targets
+
+Batcher use cases are not limited to datastores. Consider the scenario where you want to limit the number of messages you are allowed to send in a mail API. Batcher can provide the same rate limiting feature.
+
+## Batcher Components
+
+- __Batcher__: A Batcher is created for each datastore that has capacity you wish to respect. Batchers are long-lived.
+
+- __Watcher__: A Watcher is created for each process you wish to manage. Lots of Watchers will share the same Batcher. The Watcher receives the batches as they become available. Watchers are short-lived. For instance, if your solution is an HTTP server, you will probably create a Watcher with each request, send your Operations to a shared Batcher, and then get batches for processing back on your Watcher. If you need to handle different types of Operations that are processed in different ways or if they have different characteristics (such as an optimal batchsize), you might create a separate Watcher for each of those use cases.
+
+- __Operation__: Operations are enqueued into the Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
 
 There are also 2 rate limiters provided out-of-the-box...
 
 - __ProvisionedResource__: This is a simple rate limiter that has a fixed capacity per second.
 
-- __AzureSharedResource__: This rate limiter allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes.
+- __AzureSharedResource__: This rate limiter allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. An Azure Storage Account is used as the capacity lease management system.
+
+![topology](./docs/images/topology.png)
+
+### Terminology
 
 Some other terms will be used throughout...
 
@@ -31,15 +98,16 @@ Some other terms will be used throughout...
 
 - __Capacity__: The capacity that the rate limiter has been able to procure is available via the Capacity() method or the capacity event.
 
-- __MaxCapacity__: When using a rate limiter the MaxCapacity is the maximum capacity that could even be provided. For AzureSharedResource, this is the total of SharedCapacity and ReservedCapacity. For ProvisionedResource, this is the MaxCapacity that was provided when New() was called.
+- __MaxCapacity__: When using a rate limiter, the MaxCapacity is the maximum capacity that could even be provided.
+  For the rate limiter AzureSharedResource, this is the total of SharedCapacity and ReservedCapacity.
 
   - __SharedCapacity__: AzureSharedResource has a SharedCapacity which is defined when NewAzureSharedResource() is called. This is the capacity for the datastore that is shared across any number of Instances. In the most simple case, if a Cosmos database had 20K RU and 4 Instances of the service using it, you might specify the SharedCapacity as 20K on each Instance if you want all the capacity shared. SharedCapacity reduces cost.
 
   - __ReservedCapacity__: AzureSharedResource optionally allows you to specify a ReservedCapacity that will only be used by this Instance. For example, in the above example, if you wanted to reserve 2K RU for each of your Instances, you might use a ReservedCapacity of 2K (on each of 4 Instances) and then use 12K for the SharedCapacity. ReservedCapacity reduces latency.
 
-- __Partitions__: The AzureSharedResource rate limiter divides the SharedCapacity by a factor to determine the number of partitions to provision as blobs. If a process owns the exclusive lease on the partition blob, then it is allowed to use 1 factor of capacity. For example, if the SharedCapacity is 10K and the factor is 1K, then there are 10 partitions, control of each is worth 1K capacity.
+  For the rate limiter ProvisionedResource, this is the MaxCapacity that was provided when New() was called.
 
-![topology](./images/topology.png)
+- __Partitions__: The AzureSharedResource rate limiter divides the SharedCapacity by a factor to determine the number of partitions to provision as blobs. If a process owns the exclusive lease on the partition blob, then it is allowed to use 1 factor of capacity. For example, if the SharedCapacity is 10K and the factor is 1K, then there are 10 partitions, control of each is worth 1K capacity.
 
 ## Features
 
@@ -59,7 +127,7 @@ Some other terms will be used throughout...
 
 - __Pause__: When your datastore is getting too much pressure (throwing timeouts or too-many-requests), you can pause the Batcher for a short period of time to give it some time to catch-up.
 
-## Simple Explanation
+## Workflow
 
 1. A Batcher is created for a datastore. It may be assigned a rate limiter.
 
@@ -76,21 +144,13 @@ Some other terms will be used throughout...
 This code sample shows the general usage...
 
 1. If you are going to use rate limiting...
-
     1. Create one or more rate limiters via New() methods
-
     1. Provision() those rate limiters
-
     1. Start() those rate limters
-
 1. Create one or more Batchers via New() methods
-
 1. Start() those Batchers
-
 1. As you need to process data...
-
     1. Create a Watcher
-
     1. Enqueue Operations into the appropriate Batcher
 
 ```go
@@ -150,13 +210,11 @@ func main() {
                 panic(errorOnEnqueue)
             }
         }
-
     })
-
 }
 ```
 
-:information_source: There is a full sample in the [sample](/sample) folder.
+:information_source: A full code sample that demonstrates usage is available in the [sample](/sample) folder.
 
 There are some additional commands that can be executed on Batcher, including...
 
@@ -164,201 +222,47 @@ There are some additional commands that can be executed on Batcher, including...
 
 - __Flush()__: You may call Flush() to queue a manual flush. It will be processed immediately, but the Flush() method is not blocking.
 
-## Batcher Configuration
+### Batcher Configuration
 
-Creating a new Batcher with all defaults looks like this...
-
-```go
-batcher := NewBatcher()
-```
-
-Creating with all available configuration items might look like this...
+Batcher can be configured depending on your use case and requirements. For example, creating a new Batcher with some configuration items might look like this...
 
 ```go
 batcher := gobatcher.NewBatcherWithBuffer(buffer).
-    WithRateLimiter(rateLimiter).
-    WithFlushInterval(100 * time.Millisecond).
-    WithCapacityInterval(100 * time.Millisecond).
-    WithAuditInterval(10 * time.Second).
-    WithMaxOperationTime(1 * time.Minute).
-    WithPauseTime(500 * time.Millisecond).
-    WithErrorOnFullBuffer()
+    WithRateLimiter(rateLimiter)
 ```
 
-- __Buffer__ [DEFAULT: 10,0000]: The buffer determines how many Operations can be enqueued at a time. When ErrorOnFullBuffer is "false" (the default), the Enqueue() method blocks until a slot is available. When ErrorOnFullBuffer is "true" an error of type `BufferFullError{}` is returned from Enqueue().
+All configuration options are documented in the [Batcher Configuration docs](docs/configuration.md).
 
-- __RateLimiter__ [OPTIONAL]: If provided, it will be used to ensure that the cost of Operations does not exceed the capacity available per second.
+### Events
 
-- __FlushInterval__ [DEFAULT: 100ms]: This determines how often Operations in the buffer are examined. Each time the interval fires, Operations will be dequeued and added to batches or released individually (if not batchable) until such time as the aggregate cost of everything considered in the interval exceeds the capacity allotted this timeslice. For the 100ms default, there will be 10 intervals per second, so the capacity allocated is 1/10th the available capacity. Generally you want FlushInterval to be under 1 second though it could technically go higher.
-
-- __CapacityInterval__ [DEFAULT: 100ms]: This determines how often the Batcher asks the RateLimiter for capacity. Generally you should leave this alone, but you could increase it to slow down the number of storage Operations required for sharing capacity. Please be aware that this only applies to Batcher asking for capacity, it doesn't mean the rate limiter will allocate capacity any faster, just that it is being asked more often.
-
-- __AuditInterval__ [DEFAULT: 10s]: This determines how often the Target is audited to ensure it is accurate. The Target is manipulated with atomic Operations and abandoned batches are cleaned up after MaxOperationTime so Target should always be accurate. Therefore, we should expect to only see "audit-pass" and "audit-skip" events. This audit interval is a failsafe that if the buffer is empty and the MaxOperationTime (on Batcher only; Watchers are ignored) is exceeded and the Target is greater than zero, it is reset and an "audit-fail" event is raised. Since Batcher is a long-lived process, this audit helps ensure a broken process does not monopolize SharedCapacity when it isn't needed.
-
-- __MaxOperationTime__ [DEFAULT: 1m]: This determines how long the system should wait for the Watcher's callback function to be completed before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. Please note there is also a MaxOperationTime on the Watcher which takes precident over this time.
-
-- __PauseTime__ [DEFAULT: 500ms]: This determines how long the FlushInterval, CapacityInterval, and AuditIntervals are paused when Batcher.Pause() is called. Typically you would pause because the datastore cannot keep up with the volume of requests (if it happens maybe adjust your rate limiter).
-
-- __ErrorOnFullBuffer__ [OPTIONAL]: Normally the Enqueue() method will block if the buffer is full, however, you can set this configuration flag if you want it to return an error instead.
-
-- __WithEmitBatch__ [OPTIONAL]: DO NOT USE IN PRODUCTION. For unit testing it may be useful to batches that are raised across all Watchers. Setting this flag causes a "batch" event to be emitted with the operations in a batch set as the metadata (see the sample). You would not want this in production because it will diminish performance but it will also allow anyone with access to the batcher to see operations raised whether they have access to the Watcher or not.
-
-After creation, you must call Start() on a Batcher to begin processing. You can enqueue Operations before starting if desired (though keep in mind that there is a Buffer size and you will fill it if the Batcher is not running). When you are done using a Batcher, you can Stop() it.
-
-Creating a new Operation with all defaults might look like this...
-
-```go
-operation := gobatcher.NewOperation(&watcher, cost, payload)
-```
-
-Creating with all available configuration options might look like this...
-
-```go
-operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
-```
-
-...or...
-
-```go
-operation := gobatcher.NewOperation(&watcher, cost, payload).WithBatching(true)
-```
-
-- __Watcher__ [REQUIRED]: To create a new Operation, you must pass a reference to a Watcher. When this Operation is put into a batch, it is to this Watcher that it will be raised.
-
-- __Cost__ [REQUIRED]: When you create a new Operation, you must provide a cost of type `uint32`. You can supply "0" but this Operation will only be effectively rate limited if it has a non-zero cost.
-
-- __Payload__ [REQUIRED]: When you create a new Operation, you will provide a payload of type `interface{}`. This could be the entity you intend to write to the datastore, it could be a query that you intend to run, it could be a wrapper object containing a payload and metadata, or anything else that might be helpful so that you know what to process.
-
-- __AllowBatch__ [OPTIONAL]: If specified, the Operation is eligible to be batched with other Operations. Otherwise, it will be raised as a batch of a single Operation.
-
-- __WithBatching__ [DEFAULT: false]: WithBatching=true is the same as AllowBatch(). This alternate expression is useful if there is an existing test for whether or not an Operation can be batched.
-
-Creating a new Watcher with all defaults might look like this...
-
-```go
-watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-    // your processing function goes here
-})
-```
-
-Creating with all available configuration options might look like this...
-
-```go
-watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-    // your processing function goes here
-}).
-    WithMaxAttempts(3).
-    WithMaxBatchSize(500).
-    WithMaxOperationTime(1 * time.Minute)
-```
-
-- __processing_func__ [REQUIRED]: To create a new Watcher, you must provide a callback function that accepts a batch of Operations. The provided function will be called as each batch is available for processing. When the callback function is completed, it will reduce the Target by the cost of all Operations in the batch. If for some reason the processing is "stuck" in this function, they Target will be reduced after MaxOperationTime. Every time this function is called with a batch it is run as a new goroutine so anything inside could cause race conditions with the rest of your code - use atomic, sync, etc. as appropriate.
-
-- __MaxAttempts__ [OPTIONAL]: If there are transient errors, you can enqueue the same Operation again. If you do not provide MaxAttempts, it will allow you to enqueue as many times as you like. Instead, if you specify MaxAttempts, the Enqueue() method will return `TooManyAttemptsError{}` if you attempt to enqueue it too many times. You could check this yourself instead of just enqueuing, but this provides a simple pattern of always attempt to enqueue then handle errors.
-
-- __MaxOperationTime__ [OPTIONAL]: This determines how long the system should wait for the callback function to be completed on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. If MaxOperationTime is not provided on the Watcher, the Batcher MaxOperationTime is used.
-
-Creating a new ProvisionedResource might look like this...
-
-```go
-resource := NewProvisionedResource(maxCapacity)
-```
-
-- __MaxCapacity__ [REQUIRED]: To create a provisioned resource, you must provide the capacity. Since the ProvisionedResource is a fixed capacity rate limiter, this value serves as both MaxCapacity and Capacity.
-
-Creating a new AzureSharedResource might look like this...
-
-```go
-resource := gobatcher.NewAzureSharedResource("acountName", "containerName", sharedCapacity).
-    WithMasterKey("masterKey")
-```
-
-- __SharedCapacity__ [REQUIRED]: To create a provisioned resource, you must provide the capacity that will be shared across all processes. Based on this and Factor, the correct number of partitions can be created in the Azure Storage Account.
-
-- __AccountName__ [REQUIRED]: The account name of the Azure Storage Account that will host the zero-byte blobs that serve as partitions for capacity.
-
-- __ContainerName__ [REQUIRED]: The container name that will host the zero-byte blobs that serve as partitions for capacity.
-
-- __MasterKey__ [REQUIRED]: There needs to be some way to authenticate access to the Azure Storage Account, right now only master keys are supported. When other methods are supported, this will become optional, but you will always require one of the available methods.
-
-- __WithFactor__ [DEFAULT: 1]: The SharedCapacity will be divided by the Factor (rounded up) to determine the number of partitions to create when Provision() is called. For example, if you have 10,200 of SharedCapacity and a Factor of 1000, then there will be 11 partitions. Whenever a partition is obtained by AzureSharedResource, it will be worth a single Factor or 1000 RU. For predictability, the SharedCapacity should always be evenly divisible by Factor. AzureSharedResource does not support more than 500 partitions.
-
-- __WithReservedCapacity__ [OPTIONAL]: You could run AzureSharedResource with only SharedCapacity, but then every time it needs to run a single operation, the latency of that operation would be increased by the time it takes to allocate a partition. To improve the latency of these one-off operations, you may reserve some capacity so it is always available. Generally, you would reserve a small capacity and share the bulk of the capacity.
-
-- __WithMaxInterval__ [DEFAULT: 500ms]: This determines the maximum time that the AzureSharedResource will wait before attempting to allocate a new partition (if one is needed). The interval is random to improve entropy, but it won't be longer than this specified time. If you want fewer storage transactions, you could increase this time, but it would slow down how quickly the AzureSharedResource can obtain new RUs.
-
-- __WithMocks__ [OPTIONAL]: For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account. See the included unit tests for examples.
-
-After creation, you must call Provision() and then Start() on any rate limiters to begin processing. When you are done using a rate limiter, you can Stop() it.
-
-## Events
-
-Events are raised with a "name" (string), "val" (int), and "msg" (*string).
-
-The following events can be raised by Batcher...
-
-- __shutdown__: This is raised after Stop() is called on a Batcher instance.
-
-- __pause__: This is raised after Pause() is called on a Batcher instance. The val is the number of milliseconds that it was paused for.
-
-- __audit-fail__: This is raised if an error was found during the AuditInterval. The msg contains more details. Should an audit fail, there is no additional action required, the Target will automatically be remediated.
-
-- __audit-pass__: This is raised if the AuditInterval found no issues.
-
-- __audit-skip__: If the Buffer is not empty or if MaxOperationTime (on Batcher) has not been exceeded by the last batch raised, the audit will be skipped. It is normal behavior to see lots of skipped audits.
-
-The following events can be raised by ProvisionedResource and AzureSharedResource...
-
-- __shutdown__: This is raised after Stop() is called on a rate limiter instance.
-
-- __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
-
-- __batch__: This is raised only when WithEmitBatch has been added to Batcher and whenever a batch is raised to any Watcher. The val is the count of the operations in the batch.
-
-In addition, the following events can be raised by AzureSharedResource...
-
-- __failed__: This is raised if the rate limiter fails to procure capacity. This does not indicate an error condition, it is expected that attempts to procure additional capacity will have failures. The val is the index of the partition that was not obtained.
-
-- __released__: This is raised whenever the rate limiter releases capacity. The val is the index of the partition for which the lease was released.
-
-- __allocated__: This is raised whenever the rate limiter gains capacity. The val is the index of the partition for which an exclusive lease was obtained.
-
-- __error__: This is raised if there was some unexpected error condition, such as an authentication failure when attempting to allocate a partition.
-
-- __created-container__: The Azure Storage Account must exist, but the container can be created in Provision(). This event is raised if that happens. The msg is the fully qualified path to the container.
-
-- __verified-container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
-
-- __created-blob__: During Provision(), if a zero-byte blob needs to be created for a partition, this event is raised. The val is the index of the partition created.
-
-- __verified-blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
+Events are raised with a "name" (string), "val" (int), and "msg" (*string). Some of the events that can be raised by Batcher are `shutdown` or `pause`, while the rate limiters can raise events like `capacity` to indicate capacity changes. The complete list of events is documented in the [Batcher Events docs](docs/events.md).
 
 ## Rate Limiting
 
 The AzureSharedResource rate limiter works like this...
 
-![lease](./images/lease.png)
+![lease](./docs/images/lease.png)
 
 The ProvisionedResource plugs into Batcher the same way, but its capacity never changes and it has no dependency on Azure Blob Storage.
 
-### Rate Limiting Scenarios
+### Scenarios
 
 There are a couple of scenarios I want to call attention to...
 
 - ReservedCapacity plus SharedCapacity: Using 100% ReservedCapacity reduces latency and using 100% SharedCapacity is very cost efficient, however, it is generally best to find a happy middle-ground - a small amount of ReservedCapacity and the rest as SharedCapacity.
 
-- Operations per Second: If you want to limit the number of Operations per second rather than on the cost of those operations. You can create all Operations with a cost of 1 and set the capacity appropriately.
+- Operations per Second: If you want to limit the number of Operations per second rather than the cost of those operations, you can create all Operations with a cost of 1 and set the capacity appropriately.
 
 ### Cost Savings
 
 Traditionally if you want to run multiple instances of a service, you might provision capacity in your datastore times the number of instances. For example, in Azure Cosmos, if you need 20K RU and have 4 instances, you might provision 80K RU to ensure that any node could operate at maximum capacity.
 
-Using AzureSharedResource, you might still reserve capacity per instance, but it can be a small amount. You can then share capacity across the instances. For instance, in the same scenario, you might reserve 2K RU for the 4 instances and (minimally) share an addition 18K RU ().
+Using AzureSharedResource, you might still reserve capacity per instance, but it can be a small amount. You can then share capacity across the instances. For instance, in the same scenario, you might reserve 2K RU for the 4 instances and (minimally) share an addition 18K RU.
 
+![reserved-shared-capacity](./docs/images/reserved-shared-capacity.png)
 To give a cost comparison with retail pricing in the East US region with 1 TB of capacity:
 
 - 80K RU is $4,992 per month
-
 - 26K RU is $1,768 per month
 
 ### Cost Increase
@@ -373,18 +277,16 @@ However, this is a maximum cost - actual costs in many cases will be much lower 
 
 A Batcher with a rate limiter depends on each operation having a cost. The following documents provide you with assistance on determining what values you should use for cost.
 
-- [Determine costs for operations in Cosmos](./cost-in-cosmos.md)
+- [Determine costs for operations in Cosmos](docs/cost-in-cosmos.md)
 
-- [Determine costs for operations in a datastore that is not rate limited](./cost-in-non-rate-limited.md)
+- [Determine costs for operations in a datastore that is not rate limited](docs/cost-in-non-rate-limited.md)
 
-## Areas for improvement
+## Opportunities for improvement
 
-- There is currently no way to limit concurrency, but there should be. This could be implemented such that no more than "x" operations are flight at any given time.
-
-- This tool was originally designed to limit transactions against Azure Cosmos which has a cost model expressed as a single composite value (Request Unit). For datastores that might have more granular capacities, it would be nice to be able to provision Batcher with all those capacities and have an enqueue method that supported those costs. For example, memory, CPU, disk, network, etc. might all have separate capacities and individual queries might have individual costs.
+- This tool was originally designed to limit transactions against Azure Cosmos which has a cost model expressed as a single composite value (Request Unit). For datastores that might have more granular capacities, it would be nice to be able to provision Batcher with all those capacities and have an enqueue method that supports those costs. For example, memory, CPU, disk, network, etc. might all have separate capacities and individual queries might have individual costs.
 
 - There is currently no way to change capacity in the rate limiters once they are provisioned, but there is no identified use-case yet for this feature.
 
-- There is currently no good way to model a datastore that autoscales but might require some time to increase capacity. Ideally something that allowed for capacity to increase by "no more than x amount over y time" would helpful. This could be a rate limiter or a feature that is added to existing rate limiters.
+- There is currently not a good way to model a datastore that autoscales but might require some time to increase capacity. Ideally something that allowed for capacity to increase by "no more than x amount over y time" would be helpful. This could be a rate limiter or a feature that is added to existing rate limiters.
 
-- The pause logic is a simple fixed amount of time to delay new batches, but it might be nice to have an exponential back-off.
+- The pause logic is an existing feature that delays new batches for a fixed amount of time, but it might be nice to have an exponential back-off.
