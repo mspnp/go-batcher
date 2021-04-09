@@ -59,13 +59,3 @@ type NoOperationError struct{}
 func (e NoOperationError) Error() string {
 	return "no operation was provided."
 }
-
-type PartitionsOutOfRangeError struct {
-	MaxCapacity    uint32
-	Factor         uint32
-	PartitionCount int
-}
-
-func (e PartitionsOutOfRangeError) Error() string {
-	return "you must have between 1 and 500 partitions."
-}

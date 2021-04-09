@@ -30,7 +30,8 @@ type AzureSharedResource struct {
 	phaseMutex sync.Mutex
 	phase      int
 	shutdown   sync.WaitGroup
-	stop       chan bool
+	stop       chan struct{}
+	provision  chan struct{}
 
 	// capacity and target needs to be threadsafe and changes frequently
 	capacity uint32
@@ -77,6 +78,7 @@ func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 // with 20k RU, you might use a factor of 1000, meaning 20 partitions would be created, each worth 1k RU. If not provided, the factor
 // defaults to `1`. There is a limit of 500 partitions, so if you have a shared capacity in excess of 500, you must provide a factor.
 func (r *AzureSharedResource) WithFactor(val uint32) *AzureSharedResource {
+	// TODO throw an error if changed after startup
 	r.factor = val
 	return r
 }
@@ -87,7 +89,7 @@ func (r *AzureSharedResource) WithFactor(val uint32) *AzureSharedResource {
 // Generally you use reserved capacity to reduce your latency - you no longer have to wait on a partition to be acquired in order to
 // process a small number of records.
 func (r *AzureSharedResource) WithReservedCapacity(val uint32) *AzureSharedResource {
-	r.reservedCapacity = val
+	atomic.StoreUint32(&r.reservedCapacity, val)
 	return r
 }
 
@@ -99,82 +101,33 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 	return r
 }
 
-// Call this method before calling Start() to provision any needed partition blobs in the configured Azure Storage Account and container.
-func (r *AzureSharedResource) Provision(ctx context.Context) (err error) {
-
-	// only allow one phase at a time
-	r.phaseMutex.Lock()
-	defer r.phaseMutex.Unlock()
-	if r.phase != rateLimiterPhaseUninitialized {
-		err = RateLimiterImproperOrderError{}
-		return
-	}
-
-	// check requirements
-	if r.leaseManager == nil {
-		err = UndefinedLeaseManagerError{}
-		return
-	}
-	if r.factor == 0 {
-		r.factor = 1 // assume 1:1
-	}
-	if r.sharedCapacity < 1 {
-		err = UndefinedSharedCapacityError{}
-		return
-	}
-	if r.maxInterval < 1 {
-		r.maxInterval = 500 // default to 500 ms
-	}
-
-	// get a write lock on partitions
-	r.partlock.Lock()
-	defer r.partlock.Unlock()
-
-	// provision the container
-	err = r.leaseManager.provision(ctx)
-	if err != nil {
-		return
-	}
-
-	// make 1 partition per factor
-	count := int(math.Ceil(float64(r.sharedCapacity) / float64(r.factor)))
-	if count > 500 {
-		err = PartitionsOutOfRangeError{
-			MaxCapacity:    r.MaxCapacity(),
-			Factor:         r.factor,
-			PartitionCount: count,
-		}
-		return
-	}
-	r.partitions = make([]*string, count)
-
-	// provision partitions
-	err = r.leaseManager.createPartitions(ctx, count)
-
-	// mark provision as completed
-	r.phase = rateLimiterPhaseProvisioned
-
-	return
-}
-
 // This returns the maximum capacity that could ever be obtained by the rate limiter. It is `SharedCapacity + ReservedCapacity`.
 func (r *AzureSharedResource) MaxCapacity() uint32 {
-	return r.sharedCapacity + r.reservedCapacity
+	return atomic.LoadUint32(&r.sharedCapacity) + atomic.LoadUint32(&r.reservedCapacity)
 }
 
 // This returns the current allocated capacity. It is `NumberOfPartitionsControlled x Factor + ReservedCapacity`.
 func (r *AzureSharedResource) Capacity() uint32 {
-	allocatedCapacity := atomic.LoadUint32(&r.capacity)
-	return allocatedCapacity + r.reservedCapacity
+	return atomic.LoadUint32(&r.capacity) + atomic.LoadUint32(&r.reservedCapacity)
 }
 
-func (r *AzureSharedResource) calc() (total uint32) {
+func (r *AzureSharedResource) SetSharedCapacity(capacity uint32) {
+	atomic.StoreUint32(&r.sharedCapacity, capacity)
+	r.scheduleProvision()
+}
+
+func (r *AzureSharedResource) SetReservedCapacity(capacity uint32) {
+	atomic.StoreUint32(&r.reservedCapacity, capacity)
+}
+
+func (r *AzureSharedResource) calc() {
 
 	// get a read lock
 	r.partlock.RLock()
 	defer r.partlock.RUnlock()
 
 	// count the allocated partitions
+	var total uint32
 	for i := 0; i < len(r.partitions); i++ {
 		if r.partitions[i] != nil {
 			total++
@@ -187,7 +140,9 @@ func (r *AzureSharedResource) calc() (total uint32) {
 	// set the capacity variable
 	atomic.StoreUint32(&r.capacity, total)
 
-	return
+	// emit the capacity change
+	r.emit(CapacityEvent, int(r.Capacity()), "", nil)
+
 }
 
 // You should call GiveMe() to update the capacity you are requesting. You will always specify the new amount of capacity you require.
@@ -197,8 +152,9 @@ func (r *AzureSharedResource) calc() (total uint32) {
 func (r *AzureSharedResource) GiveMe(target uint32) {
 
 	// reduce capacity request by reserved capacity
-	if target >= r.reservedCapacity {
-		target -= r.reservedCapacity
+	reservedCapacity := atomic.LoadUint32(&r.reservedCapacity)
+	if target >= reservedCapacity {
+		target -= reservedCapacity
 	} else {
 		target = 0
 	}
@@ -212,6 +168,15 @@ func (r *AzureSharedResource) GiveMe(target uint32) {
 	// store
 	atomic.StoreUint32(&r.target, uint32(actual))
 
+}
+
+func (r *AzureSharedResource) scheduleProvision() {
+	select {
+	case r.provision <- struct{}{}:
+		// successfully set the provision flag
+	default:
+		// provision flag was already set
+	}
 }
 
 func (r *AzureSharedResource) getAllocatedAndRandomUnallocatedPartition() (count, index uint32, err error) {
@@ -266,6 +231,34 @@ func (r *AzureSharedResource) clearPartitionId(index uint32) {
 
 }
 
+func (r *AzureSharedResource) provisionBlobs(ctx context.Context) {
+
+	// get a write lock on partitions
+	r.partlock.Lock()
+	defer r.partlock.Unlock()
+
+	// make 1 partition per factor
+	sharedCapacity := atomic.LoadUint32(&r.sharedCapacity)
+	count := int(math.Ceil(float64(sharedCapacity) / float64(r.factor)))
+	if count > 500 {
+		r.emit(ErrorEvent, count, "only 500 partitions were created as this is the max supported", nil)
+		count = 500
+	}
+	r.partitions = make([]*string, count)
+
+	// emit start
+	r.emit(ProvisionStartEvent, count, "start blob provisioning", nil)
+
+	// provision partitions
+	if err := r.leaseManager.createPartitions(ctx, count); err != nil {
+		r.emit(ErrorEvent, 0, "creating partitions raised an error", err)
+	}
+
+	// emit done
+	r.emit(ProvisionDoneEvent, count, "blob provisioning done", nil)
+
+}
+
 // Call this method to start the processing loop. It must be called after Provision(). The processing loop runs on a random interval
 // not to exceed MaxInterval and attempts to obtain an exclusive lease on blob partitions to fulfill the capacity requests.
 func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
@@ -273,25 +266,42 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != rateLimiterPhaseProvisioned {
+	if r.phase != rateLimiterPhaseUninitialized {
 		err = RateLimiterImproperOrderError{}
 		return
 	}
 
-	// calculate capacity change
-	recalc := func() {
-		go func() {
-			capacity := r.calc()
-			r.emit(CapacityEvent, int(capacity+r.reservedCapacity), "", nil)
-		}()
+	// check requirements
+	if r.leaseManager == nil {
+		err = UndefinedLeaseManagerError{}
+		return
+	}
+	if r.factor == 0 {
+		r.factor = 1 // assume 1:1
+	}
+	if r.sharedCapacity < 1 {
+		err = UndefinedSharedCapacityError{}
+		return
+	}
+	if r.maxInterval < 1 {
+		r.maxInterval = 500 // default to 500 ms
+	}
+
+	// provision the container
+	if err = r.leaseManager.provision(ctx); err != nil {
+		return
 	}
 
 	// announce starting capacity
-	recalc()
+	go r.calc()
 
 	// prepare for shutdown
 	r.shutdown.Add(1)
-	r.stop = make(chan bool)
+
+	// init flowcontrol chans
+	r.stop = make(chan struct{})
+	r.provision = make(chan struct{}, 1)
+	r.scheduleProvision()
 
 	// run the loop to try and allocate resources
 	go func() {
@@ -309,6 +319,8 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 			select {
 			case <-r.stop:
 				return
+			case <-r.provision:
+				r.provisionBlobs(ctx)
 			default:
 				// continue
 			}
@@ -334,13 +346,13 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 					time.Sleep(leaseTime)
 					r.clearPartitionId(i)
 					r.emit(ReleasedEvent, int(index), "", nil)
-					recalc()
+					r.calc()
 				}(index)
 
 				// mark the partition as allocated
 				r.setPartitionId(index, id)
 				r.emit(AllocatedEvent, int(index), "", nil)
-				recalc()
+				go r.calc()
 
 			}
 

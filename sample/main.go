@@ -98,9 +98,6 @@ func main() {
 		}
 	})
 	defer azresource.RemoveListener(resourceListener)
-	if err := azresource.Provision(ctx); err != nil {
-		panic(err)
-	}
 	if err := azresource.Start(ctx); err != nil {
 		panic(err)
 	}

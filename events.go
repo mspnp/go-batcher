@@ -15,6 +15,8 @@ const (
 	TargetEvent            = "target"
 	VerifiedContainerEvent = "verified-container"
 	CreatedContainerEvent  = "created-container"
+	ProvisionStartEvent    = "provision-start"
+	ProvisionDoneEvent     = "provision-done"
 	VerifiedBlobEvent      = "verified-blob"
 	CreatedBlobEvent       = "created-blob"
 	FailedEvent            = "failed"

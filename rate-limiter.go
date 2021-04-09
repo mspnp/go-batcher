@@ -4,13 +4,11 @@ import "context"
 
 const (
 	rateLimiterPhaseUninitialized = iota
-	rateLimiterPhaseProvisioned
 	rateLimiterPhaseStarted
 	rateLimiterPhaseStopped
 )
 
-type RateLimiter interface {
-	Provision(ctx context.Context) error
+type IRateLimiter interface {
 	MaxCapacity() uint32
 	Capacity() uint32
 	GiveMe(target uint32)

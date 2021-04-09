@@ -16,7 +16,7 @@ const (
 
 type IBatcher interface {
 	ieventer
-	WithRateLimiter(rl RateLimiter) IBatcher
+	WithRateLimiter(rl IRateLimiter) IBatcher
 	WithFlushInterval(val time.Duration) IBatcher
 	WithCapacityInterval(val time.Duration) IBatcher
 	WithAuditInterval(val time.Duration) IBatcher
@@ -37,7 +37,7 @@ type Batcher struct {
 	eventer
 
 	// configuration items that should not change after Start()
-	ratelimiter       RateLimiter
+	ratelimiter       IRateLimiter
 	flushInterval     time.Duration
 	capacityInterval  time.Duration
 	auditInterval     time.Duration
@@ -78,7 +78,7 @@ func NewBatcherWithBuffer(maxBufferSize uint32) IBatcher {
 
 // Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
 // optional; the default behavior does not rate limit.
-func (r *Batcher) WithRateLimiter(rl RateLimiter) IBatcher {
+func (r *Batcher) WithRateLimiter(rl IRateLimiter) IBatcher {
 	r.ratelimiter = rl
 	return r
 }
