@@ -996,6 +996,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforced() {
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
 		atomic.AddUint32(&batches, 1)
+		time.Sleep(15 * time.Millisecond) // NOTE: simulate a long-running operation
 		s.wg.Done()
 	})
 	for i := 0; i < 3; i++ {
@@ -1014,6 +1015,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforcedWithBatchable()
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
 		atomic.AddUint32(&batches, 1)
+		time.Sleep(15 * time.Millisecond) // NOTE: simulate a long-running operation
 		s.wg.Done()
 	}).WithMaxBatchSize(2)
 	for i := 0; i < 5; i++ {
@@ -1032,6 +1034,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestSlotsAreAvailableOnDone() {
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
 		atomic.AddUint32(&batches, 1)
+		time.Sleep(15 * time.Millisecond) // NOTE: simulate a long-running operation
 		s.wg.Done()
 	})
 	for i := 0; i < 5; i++ {
