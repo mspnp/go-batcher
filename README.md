@@ -401,3 +401,5 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 - The pause logic is a simple fixed amount of time to delay new batches, but it might be nice to have an exponential back-off.
 
 - Currently the only shared capacity rate limiter is for Azure. It would be nice to add support for Zookeeper, Consul, etcd, redis/redsync, or similar.
+
+- There is currently no way to prioritize Operations so they are released before other Batches, but now that the Buffer is a double linked list, this would be possible.
