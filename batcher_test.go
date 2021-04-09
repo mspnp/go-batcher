@@ -961,10 +961,11 @@ type TestMaxConcurrentBatchesSuite struct {
 	suite.Suite
 	batcher  gobatcher.IBatcher
 	listener uuid.UUID
-	wg       sync.WaitGroup
+	wg       *sync.WaitGroup
 }
 
 func (s *TestMaxConcurrentBatchesSuite) BeforeTest(suiteName, testName string) {
+	s.wg = &sync.WaitGroup{}
 	s.batcher = gobatcher.NewBatcher().
 		WithFlushInterval(10 * time.Minute).
 		WithEmitBatch().
