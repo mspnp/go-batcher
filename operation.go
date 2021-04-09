@@ -1,6 +1,8 @@
 package batcher
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+)
 
 type IOperation interface {
 	Payload() interface{}

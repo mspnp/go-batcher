@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	gobatcher "github.com/plasne/go-batcher"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 )
 
 func TestEnqueue(t *testing.T) {
@@ -955,100 +957,162 @@ func TestManualFlush(t *testing.T) {
 	}
 }
 
+type TestMaxConcurrentBatchesSuite struct {
+	suite.Suite
+	batcher  gobatcher.IBatcher
+	listener uuid.UUID
+	wg       sync.WaitGroup
+}
+
+func (s *TestMaxConcurrentBatchesSuite) BeforeTest(suiteName, testName string) {
+	s.batcher = gobatcher.NewBatcher().
+		WithFlushInterval(10 * time.Minute).
+		WithEmitBatch()
+	switch testName {
+	case "TestBatchPacking":
+		s.batcher.WithMaxConcurrentBatches(1)
+	default:
+		s.batcher.WithMaxConcurrentBatches(2)
+	}
+	s.listener = s.batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.FlushDoneEvent:
+			s.wg.Done()
+		case gobatcher.BatchEvent:
+			s.wg.Add(1)
+		}
+	})
+	err := s.batcher.Start()
+	s.NoError(err, "not expecting a start error")
+}
+
+func (s *TestMaxConcurrentBatchesSuite) TearDownTest() {
+	s.batcher.RemoveListener(s.listener)
+}
+
+func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforced() {
+	var batches uint32
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		atomic.AddUint32(&batches, 1)
+		s.wg.Done()
+	})
+	for i := 0; i < 3; i++ {
+		op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+		err := s.batcher.Enqueue(op)
+		s.NoError(err, "not expecting an enqueue error")
+	}
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.Equal(uint32(2), atomic.LoadUint32(&batches))
+	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
+}
+
+func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforcedWithBatchable() {
+	var batches uint32
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		atomic.AddUint32(&batches, 1)
+		s.wg.Done()
+	}).WithMaxBatchSize(2)
+	for i := 0; i < 5; i++ {
+		op := gobatcher.NewOperation(watcher, 0, struct{}{}, true)
+		err := s.batcher.Enqueue(op)
+		s.NoError(err, "not expecting an enqueue error")
+	}
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.Equal(uint32(2), atomic.LoadUint32(&batches))
+	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
+}
+
+func (s *TestMaxConcurrentBatchesSuite) TestSlotsAreAvailableOnDone() {
+	var batches uint32
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		atomic.AddUint32(&batches, 1)
+		s.wg.Done()
+	})
+	for i := 0; i < 5; i++ {
+		op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+		err := s.batcher.Enqueue(op)
+		s.NoError(err, "not expecting an enqueue error")
+	}
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.Equal(uint32(2), atomic.LoadUint32(&batches))
+	s.Equal(uint32(3), s.batcher.OperationsInBuffer())
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.Equal(uint32(4), atomic.LoadUint32(&batches))
+	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
+}
+
+func (s *TestMaxConcurrentBatchesSuite) TestRunningOpHoldsSlot() {
+	var batches uint32
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		atomic.AddUint32(&batches, 1)
+		s.wg.Done()
+		time.Sleep(15 * time.Millisecond) // NOTE: simulate a long-running operation
+	})
+	for i := 0; i < 3; i++ {
+		op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+		err := s.batcher.Enqueue(op)
+		s.NoError(err, "not expecting an enqueue error")
+	}
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.Equal(uint32(2), atomic.LoadUint32(&batches))
+	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
+}
+
+func (s *TestMaxConcurrentBatchesSuite) TestBatchPacking() {
+	var err error
+	var batches uint32
+	watcher1 := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		s.Equal(2, len(batch))
+		atomic.AddUint32(&batches, 1)
+		s.wg.Done()
+	})
+	watcher2 := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		s.FailNow("expecting never to see this batch raised")
+	})
+	op1 := gobatcher.NewOperation(watcher1, 0, struct{}{}, true)
+	err = s.batcher.Enqueue(op1)
+	s.NoError(err, "not expecting an enqueue error")
+	op2 := gobatcher.NewOperation(watcher2, 0, struct{}{}, true)
+	err = s.batcher.Enqueue(op2)
+	s.NoError(err, "not expecting an enqueue error")
+	op3 := gobatcher.NewOperation(watcher1, 0, struct{}{}, true)
+	err = s.batcher.Enqueue(op3)
+	s.NoError(err, "not expecting an enqueue error")
+	s.wg.Add(1)
+	s.batcher.Flush()
+	s.wg.Wait()
+	s.Equal(uint32(1), atomic.LoadUint32(&batches), "expecting watcher1 to see a batch once with 2 items")
+	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
+}
+
 func TestMaxConcurrentBatches(t *testing.T) {
+	suite.Run(t, new(TestMaxConcurrentBatchesSuite))
+}
 
-	t.Run("max concurrent batches is respected", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher().
-			WithMaxConcurrentBatches(2).
-			WithFlushInterval(10 * time.Minute)
-		err := batcher.Start()
-		assert.NoError(t, err, "not expecting a start error")
-		var batches uint32
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-			atomic.AddUint32(&batches, 1)
-			time.Sleep(5 * time.Millisecond) // NOTE: simulate a long-running operation
+/*
+
+
+		t.Run("an operation that needs a new batch doesn't cause other batches to be less full", func(t *testing.T) {
+			var err error
+			batcher := gobatcher.NewBatcher().
+				WithMaxConcurrentBatches(1).
+				WithFlushInterval(10 * time.Minute)
+			err = batcher.Start()
+			assert.NoError(t, err, "not expecting a start error")
 		})
-		for i := 0; i < 3; i++ {
-			op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-			err = batcher.Enqueue(op)
-			assert.NoError(t, err, "not expecting an enqueue error")
-		}
-		batcher.Flush()
-		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, uint32(2), batches)
-		assert.Equal(t, uint32(1), batcher.OperationsInBuffer())
-	})
-
-	t.Run("max concurrent batches is respected with batchable", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher().
-			WithMaxConcurrentBatches(2).
-			WithFlushInterval(10 * time.Minute)
-		err := batcher.Start()
-		assert.NoError(t, err, "not expecting a start error")
-		var batches uint32
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-			atomic.AddUint32(&batches, 1)
-			time.Sleep(5 * time.Millisecond) // NOTE: simulate a long-running operation
-		}).WithMaxBatchSize(2)
-		for i := 0; i < 5; i++ {
-			op := gobatcher.NewOperation(watcher, 100, struct{}{}, true)
-			err = batcher.Enqueue(op)
-			assert.NoError(t, err, "not expecting an enqueue error")
-		}
-		batcher.Flush()
-		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, uint32(2), batches)
-		assert.Equal(t, uint32(1), batcher.OperationsInBuffer())
-	})
-
-	t.Run("new batch slots are made available upon done", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher().
-			WithMaxConcurrentBatches(2).
-			WithFlushInterval(10 * time.Minute)
-		err := batcher.Start()
-		assert.NoError(t, err, "not expecting a start error")
-		var batches uint32
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-			atomic.AddUint32(&batches, 1)
-			time.Sleep(5 * time.Millisecond) // NOTE: simulate a long-running operation
-		})
-		for i := 0; i < 5; i++ {
-			op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-			err := batcher.Enqueue(op)
-			assert.NoError(t, err, "not expecting an enqueue error")
-		}
-		batcher.Flush()
-		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, uint32(2), batches)
-		assert.Equal(t, uint32(3), batcher.OperationsInBuffer())
-		batcher.Flush()
-		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, uint32(4), batches)
-		assert.Equal(t, uint32(1), batcher.OperationsInBuffer())
-	})
-
-	t.Run("pending op still cannot be processed", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher().
-			WithMaxConcurrentBatches(2).
-			WithFlushInterval(10 * time.Minute)
-		err := batcher.Start()
-		assert.NoError(t, err, "not expecting a start error")
-		var batches uint32
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-			atomic.AddUint32(&batches, 1)
-			time.Sleep(15 * time.Millisecond) // NOTE: simulate a long-running operation
-		})
-		for i := 0; i < 3; i++ {
-			op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-			err = batcher.Enqueue(op)
-			assert.NoError(t, err, "not expecting an enqueue error")
-		}
-		batcher.Flush()
-		time.Sleep(10 * time.Millisecond)
-		batcher.Flush()
-		time.Sleep(2 * time.Millisecond)
-		assert.Equal(t, uint32(2), batches)
-		assert.Equal(t, uint32(1), batcher.OperationsInBuffer())
-	})
 
 }
+*/

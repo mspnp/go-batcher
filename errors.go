@@ -42,6 +42,20 @@ func (e BufferNotAllocated) Error() string {
 	return "the buffer was never allocated, make sure to create a Batcher by calling NewBatcher()."
 }
 
+/*
+type UnspecifiedOperationToRemoveFromBuffer struct{}
+
+func (e UnspecifiedOperationToRemoveFromBuffer) Error() string {
+	return "there was no operation specified to be removed from the buffer."
+}
+
+type InvalidChainOnRemoveFromBuffer struct{}
+
+func (e InvalidChainOnRemoveFromBuffer) Error() string {
+	return "the previous supplied operation was not valid when calling remove from buffer."
+}
+*/
+
 type RateLimiterImproperOrderError struct{}
 
 func (e RateLimiterImproperOrderError) Error() string {
