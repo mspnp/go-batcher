@@ -1,6 +1,7 @@
 package batcher
 
-// NOTE: please review this code which organizes operations into batches based on criteria
+// TODO add docs to support this PR
+// TODO test in a real scenario
 
 import (
 	"sync"

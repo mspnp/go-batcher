@@ -1,7 +1,5 @@
 package main
 
-// NOTE: please review this as a sample of using batcher
-
 import (
 	"context"
 	"errors"
