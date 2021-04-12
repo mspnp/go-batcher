@@ -12,26 +12,26 @@ When using Batcher, you can leverage the expected set and number of Events that 
 
 ```go
 func WriteString(batcher gobatcher.IBatcher, data []string) {
-    var wg sync.WaitGroup
-    wg.Add(len(data))
-    watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
-        fmt.Println("START-OF-BATCH")
-        for _, op := range batch {
-            val := op.Payload().(string)
-            fmt.Println(val)
-        }
-        fmt.Println("END-OF-BATCH")
-        for i := 0; i < len(batch); i++ {
-            wg.Done()
-        }
-    })
-    for i, element := range data {
-        cost := 100 + i // do some fancy cost calculation
-        if err := batcher.Enqueue(gobatcher.NewOperation(watcher, uint32(cost), element, true)); err != nil {
-            panic(err)
-        }
-    }
-    wg.Wait()
+	var wg sync.WaitGroup
+	wg.Add(len(data))
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		fmt.Println("START-OF-BATCH")
+		for _, op := range batch {
+			val := op.Payload().(string)
+			fmt.Println(val)
+		}
+		fmt.Println("END-OF-BATCH")
+		for i := 0; i < len(batch); i++ {
+			wg.Done()
+		}
+	})
+	for i, element := range data {
+		cost := 100 + i // do some fancy cost calculation
+		if err := batcher.Enqueue(gobatcher.NewOperation(watcher, uint32(cost), element, true)); err != nil {
+			panic(err)
+		}
+	}
+	wg.Wait()
 }
 ```
 
@@ -65,7 +65,7 @@ func TestWriteString_CostIs100OrMore(t *testing.T) {
 
 ### Using mocks
 
-Interfaces IBatcher and IOperation have beed added and can be used to facilitate unit testing by creating mocks for Batcher and Operation -with the consideration that mock implementation will be needed for all the Batcher features that are used.
+Interfaces IBatcher, IWatcher and IOperation have beed added and can be used to facilitate unit testing by creating mocks, with the consideration that mock implementation will be needed for all the features that are used.
 
 ### AzureSharedResource - using withMocks
 
