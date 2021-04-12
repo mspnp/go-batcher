@@ -42,16 +42,16 @@ func (e BufferNotAllocated) Error() string {
 	return "the buffer was never allocated, make sure to create a Batcher by calling NewBatcher()."
 }
 
-type RateLimiterImproperOrderError struct{}
+type ImproperOrderError struct{}
 
-func (e RateLimiterImproperOrderError) Error() string {
-	return "methods can only be called in this order Provision() > Start() > Stop()."
+func (e ImproperOrderError) Error() string {
+	return "methods can only be called in this order Start() > Stop()."
 }
 
-type BatcherImproperOrderError struct{}
+type InitializationOnlyError struct{}
 
-func (e BatcherImproperOrderError) Error() string {
-	return "methods can only be called in this order Start() > Stop()."
+func (e InitializationOnlyError) Error() string {
+	return "this property can only be set before Start() is called."
 }
 
 type NoOperationError struct{}

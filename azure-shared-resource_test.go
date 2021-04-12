@@ -508,10 +508,10 @@ func TestAzureSRStart(t *testing.T) {
 			wg.Done()
 		}()
 		wg.Wait()
-		if e, ok := err1.(gobatcher.RateLimiterImproperOrderError); ok && err2 == nil {
+		if e, ok := err1.(gobatcher.ImproperOrderError); ok && err2 == nil {
 			// valid response
 			_ = e.Error() // improves code coverage
-		} else if e, ok := err2.(gobatcher.RateLimiterImproperOrderError); ok && err1 == nil {
+		} else if e, ok := err2.(gobatcher.ImproperOrderError); ok && err1 == nil {
 			// valid response
 			_ = e.Error() // improves code coverage
 		} else {

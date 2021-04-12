@@ -1,6 +1,9 @@
 
 # Batcher
 
+// TODO add docs to support this PR
+// TODO test in a real scenario
+
 In the most simple case, Batcher allows you to enqueue operations which are then given back to you in a batch. However, in a more common case, datastores have performance limits and work executed against those datastores have costs in terms of memory, CPU, disk, network, and so on (whether you have quantified those costs or not). In this case, Batcher can provide an easy way for developers to consume all available resources on the datastore without exceeding the limits.
 
 Consider this example...

@@ -79,6 +79,11 @@ func NewBatcherWithBuffer(maxBufferSize uint32) IBatcher {
 // Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
 // optional; the default behavior does not rate limit.
 func (r *Batcher) WithRateLimiter(rl IRateLimiter) IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.ratelimiter = rl
 	return r
 }
@@ -88,6 +93,11 @@ func (r *Batcher) WithRateLimiter(rl IRateLimiter) IBatcher {
 // available capacity, there would be 10 flushes per second, each dispatching one or more batches of Operations that aim for 1,000 total
 // capacity. If no rate limiter is used, each flush will attempt to empty the buffer.
 func (r *Batcher) WithFlushInterval(val time.Duration) IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.flushInterval = val
 	return r
 }
@@ -97,6 +107,11 @@ func (r *Batcher) WithFlushInterval(val time.Duration) IBatcher {
 // an Operation it increments a target based on cost. When you call done() on a batch (or the MaxOperationTime is exceeded), the target is
 // decremented by the cost of all Operations in the batch. If there is no rate limiter attached, this interval does nothing.
 func (r *Batcher) WithCapacityInterval(val time.Duration) IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.capacityInterval = val
 	return r
 }
@@ -107,6 +122,11 @@ func (r *Batcher) WithCapacityInterval(val time.Duration) IBatcher {
 // be correct, this is one final failsafe to ensure the Batcher isn't asking for the wrong capacity. Generally you should leave this set
 // at the default.
 func (r *Batcher) WithAuditInterval(val time.Duration) IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.auditInterval = val
 	return r
 }
@@ -115,6 +135,11 @@ func (r *Batcher) WithAuditInterval(val time.Duration) IBatcher {
 // You should always call the done() func when your batch has completed processing instead of relying on MaxOperationTime. The MaxOperationTime
 // on Batcher will be superceded by MaxOperationTime on Watcher if provided.
 func (r *Batcher) WithMaxOperationTime(val time.Duration) IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.maxOperationTime = val
 	return r
 }
@@ -123,6 +148,11 @@ func (r *Batcher) WithMaxOperationTime(val time.Duration) IBatcher {
 // is called because errors are being received from the datastore such as TooManyRequests or Timeout. Pausing hopefully allows the datastore
 // to catch up without making the problem worse.
 func (r *Batcher) WithPauseTime(val time.Duration) IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.pauseTime = val
 	return r
 }
@@ -130,12 +160,22 @@ func (r *Batcher) WithPauseTime(val time.Duration) IBatcher {
 // Setting this option changes Enqueue() such that it throws an error if the buffer is full. Normal behavior is for the Enqueue() func to
 // block until it is able to add to the buffer.
 func (r *Batcher) WithErrorOnFullBuffer() IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.errorOnFullBuffer = true
 	return r
 }
 
 // DO NOT SET THIS IN PRODUCTION. For unit tests, it may be beneficial to raise an event for each batch of operations.
 func (r *Batcher) WithEmitBatch() IBatcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.emitBatch = true
 	return r
 }
@@ -296,7 +336,7 @@ func (r *Batcher) Start() (err error) {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != batcherPhaseUninitialized {
-		err = BatcherImproperOrderError{}
+		err = ImproperOrderError{}
 		return
 	}
 

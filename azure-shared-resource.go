@@ -59,6 +59,11 @@ func NewAzureSharedResource(accountName, containerName string, sharedCapacity ui
 
 // This allows you to provide mocked objects for container and blob for unit tests.
 func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) *AzureSharedResource {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMocks(container, blob)
 	}
@@ -68,6 +73,11 @@ func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBl
 // You must provide credentials for the AzureSharedResource to access the Azure Storage Account. Currently, the only supported method
 // is to provide a read/write key via WithMasterKey(). This method is required unless you calling WithMocks().
 func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMasterKey(val)
 	}
@@ -78,7 +88,11 @@ func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 // with 20k RU, you might use a factor of 1000, meaning 20 partitions would be created, each worth 1k RU. If not provided, the factor
 // defaults to `1`. There is a limit of 500 partitions, so if you have a shared capacity in excess of 500, you must provide a factor.
 func (r *AzureSharedResource) WithFactor(val uint32) *AzureSharedResource {
-	// TODO throw an error if changed after startup
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.factor = val
 	return r
 }
@@ -89,6 +103,11 @@ func (r *AzureSharedResource) WithFactor(val uint32) *AzureSharedResource {
 // Generally you use reserved capacity to reduce your latency - you no longer have to wait on a partition to be acquired in order to
 // process a small number of records.
 func (r *AzureSharedResource) WithReservedCapacity(val uint32) *AzureSharedResource {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	atomic.StoreUint32(&r.reservedCapacity, val)
 	return r
 }
@@ -97,6 +116,11 @@ func (r *AzureSharedResource) WithReservedCapacity(val uint32) *AzureSharedResou
 // reduce the number of collisions and to provide an equal opportunity for processes to compete for partitions. This setting determines
 // the maximum amount of time between intervals. It defaults to `500` and is measured in milliseconds.
 func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
 	r.maxInterval = val
 	return r
 }
@@ -267,7 +291,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != rateLimiterPhaseUninitialized {
-		err = RateLimiterImproperOrderError{}
+		err = ImproperOrderError{}
 		return
 	}
 
