@@ -237,6 +237,11 @@ All configuration options are documented in the [Batcher Configuration docs](doc
 
 Events are raised with a "name" (string), "val" (int), and "msg" (*string). Some of the events that can be raised by Batcher are `shutdown` or `pause`, while the rate limiters can raise events like `capacity` to indicate capacity changes. The complete list of events is documented in the [Batcher Events docs](docs/events.md).
 
+
+### Unit Testing
+
+There are several ways to facilitate unit testing when using go-batcher. Detailed documentation is available in the [Testing docs](./docs/testing.md).
+
 ## Rate Limiting
 
 The AzureSharedResource rate limiter works like this...

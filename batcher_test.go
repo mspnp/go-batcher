@@ -710,7 +710,7 @@ func TestTimers(t *testing.T) {
 			err := batcher.Start()
 			assert.NoError(t, err, "not expecting a start error")
 			time.Sleep(d.wait)
-			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v operations to be completed given the %v interval and capacity for only a single operation", d.interval, d.expect)
+			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v operations to be completed given the %v interval and capacity for only a single operation", d.expect, d.interval)
 		})
 	}
 
@@ -740,7 +740,7 @@ func TestTimers(t *testing.T) {
 			err = batcher.Start()
 			assert.NoError(t, err, "not expecting a start error")
 			time.Sleep(d.wait)
-			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v capacity requests given the %v interval and capacity for only a single operation", d.interval, d.expect)
+			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v capacity requests given the %v interval and capacity for only a single operation", d.expect, d.interval)
 		})
 	}
 
