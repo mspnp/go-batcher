@@ -31,6 +31,7 @@ type IBatcher interface {
 	WithErrorOnFullBuffer() IBatcher
 	WithEmitBatch() IBatcher
 	WithEmitFlush() IBatcher
+	WithEmitRequest() IBatcher
 	WithMaxConcurrentBatches(val uint32) IBatcher
 	Enqueue(op IOperation) error
 	Pause()
@@ -55,6 +56,7 @@ type Batcher struct {
 	errorOnFullBuffer    bool
 	emitBatch            bool
 	emitFlush            bool
+	emitRequest          bool
 	maxConcurrentBatches uint32
 
 	// used for internal operations
@@ -157,6 +159,13 @@ func (r *Batcher) WithEmitBatch() IBatcher {
 // a flush is started and completed.
 func (r *Batcher) WithEmitFlush() IBatcher {
 	r.emitFlush = true
+	return r
+}
+
+// Generally you do not want this setting for production, but it can be helpful for unit tests to raise an event every time
+// a request is made for capacity.
+func (r *Batcher) WithEmitRequest() IBatcher {
+	r.emitRequest = true
 	return r
 }
 
@@ -463,7 +472,9 @@ func (r *Batcher) Start() (err error) {
 				// ask for capacity
 				if r.ratelimiter != nil {
 					request := r.NeedsCapacity()
-					r.emit(RequestEvent, int(request), "", nil)
+					if r.emitRequest {
+						r.emit(RequestEvent, int(request), "", nil)
+					}
 					r.ratelimiter.GiveMe(request)
 				}
 

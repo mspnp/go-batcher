@@ -288,12 +288,13 @@ func TestNeedsCapacity(t *testing.T) {
 		res := gobatcher.NewProvisionedResource(10000)
 		batcher := gobatcher.NewBatcher().
 			WithRateLimiter(res).
-			WithFlushInterval(1 * time.Millisecond)
+			WithFlushInterval(1 * time.Millisecond).
+			WithEmitRequest()
 		var mu sync.Mutex
 		var max int
 		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 			switch event {
-			case "request":
+			case gobatcher.RequestEvent:
 				mu.Lock()
 				defer mu.Unlock()
 				if val > max {
@@ -727,7 +728,8 @@ func TestTimers(t *testing.T) {
 			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000)
 			batcher := gobatcher.NewBatcher().
 				WithRateLimiter(res).
-				WithCapacityInterval(d.interval)
+				WithCapacityInterval(d.interval).
+				WithEmitRequest()
 			var count uint32 = 0
 			batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {

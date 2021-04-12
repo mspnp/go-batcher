@@ -2,7 +2,7 @@
 
 # Determining the cost of operations in Cosmos
 
-This document should help you determine the cost of operations when Batcher is applied to Cosmos.
+This document should help you determine the cost of operations when Batcher is applied to [Azure Cosmos DB](https://azure.microsoft.com/en-us/services/cosmos-db/).
 
 Cosmos is a rate limited NoSQL database solution. This means that operations you execute against the datastore have a cost that is counted against your provisioned capacity. Specifically, when you create a Cosmos database and/or collection, you are specifying a capacity in Request Units (RU) per second. Each operation also has a cost in RU. If you exceed your allotment<sup>1</sup>, you will receive TooManyRequests errors and eventually will be cutoff with ServiceUnavailable errors.
 
@@ -18,7 +18,7 @@ These steps are described in more detail below, but a workflow for determining c
 
 1. Define all indexes in Cosmos.
 
-1. Populate the collection with a reasonable amount of data (could be sample data). If you expect your application to have normally have millions of records, populate it with millions of records.
+1. Populate the collection with a reasonable amount of data (could be sample data). If you expect your application to normally have millions of records, populate it with millions of records.
 
 1. Write your representative documents and record the RU cost.
 
