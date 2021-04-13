@@ -131,6 +131,26 @@ func main() {
 		panic(err)
 	}
 
+	var capacityOffset uint32
+
+	http.HandleFunc("/inc", func(res http.ResponseWriter, req *http.Request) {
+		capacityOffset += 1000
+		capacity := capacityOffset + uint32(CAPACITY)
+		azresource.SetSharedCapacity(capacity)
+		log.Debug().Msgf("increased shared capacity by 1000 to %v.", capacity)
+	})
+
+	http.HandleFunc("/dec", func(res http.ResponseWriter, req *http.Request) {
+		if capacityOffset+uint32(CAPACITY) >= 1000 {
+			capacityOffset -= 1000
+			capacity := capacityOffset + uint32(CAPACITY)
+			azresource.SetSharedCapacity(capacity)
+			log.Debug().Msgf("decreased shared capacity by 1000 to %v.", capacity)
+		} else {
+			log.Debug().Msgf("shared capacity cannot go below 0.")
+		}
+	})
+
 	// handle the ingest
 	http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
 		log.Debug().Msgf("started ingest request...")
@@ -163,7 +183,9 @@ func main() {
 			payload := struct{}{}
 			op := gobatcher.NewOperation(watcher, 10, payload, true)
 			if errorOnEnqueue := batcher.Enqueue(op); errorOnEnqueue != nil {
-				panic(errorOnEnqueue)
+				res.WriteHeader(http.StatusInternalServerError)
+				_, _ = res.Write([]byte(errorOnEnqueue.Error()))
+				return
 			}
 		}
 		log.Debug().Msgf("generated %v records.", total)

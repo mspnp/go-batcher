@@ -720,3 +720,143 @@ func TestRemoveListener(t *testing.T) {
 	})
 
 }
+
+func TestSetSharedCapacity(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	var start, done uint32
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionStartEvent:
+			atomic.AddUint32(&start, 1)
+			wg.Done()
+		case gobatcher.ProvisionDoneEvent:
+			atomic.AddUint32(&done, 1)
+			wg.Done()
+		}
+	})
+
+	wg.Add(2)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(1), start)
+	assert.Equal(t, uint32(1), done)
+	assert.Equal(t, uint32(10000), res.MaxCapacity())
+
+	atomic.StoreUint32(&start, 0)
+	atomic.StoreUint32(&done, 0)
+
+	wg.Add(2)
+	res.SetSharedCapacity(20000)
+	wg.Wait()
+	assert.Equal(t, uint32(1), start)
+	assert.Equal(t, uint32(1), done)
+	assert.Equal(t, uint32(20000), res.MaxCapacity())
+}
+
+func TestSetReservedCapacity(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(10000), res.MaxCapacity())
+	assert.Equal(t, uint32(0), res.Capacity())
+
+	wg.Add(1)
+	res.SetReservedCapacity(2000)
+	wg.Wait()
+	assert.Equal(t, uint32(12000), res.MaxCapacity())
+	assert.Equal(t, uint32(2000), res.Capacity())
+}
+
+func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var provisionWg, capacityWg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			provisionWg.Done()
+		case gobatcher.CapacityEvent:
+			capacityWg.Done()
+		}
+	})
+
+	provisionWg.Add(1)
+	capacityWg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	provisionWg.Wait()
+	capacityWg.Wait()
+
+	capacityWg.Add(5)
+	res.GiveMe(5000)
+	capacityWg.Wait()
+	assert.Equal(t, uint32(5000), res.Capacity())
+
+	provisionWg.Add(1)
+	capacityWg.Add(1)
+	res.SetSharedCapacity(12000)
+	provisionWg.Wait()
+	capacityWg.Wait()
+	assert.Equal(t, uint32(5000), res.Capacity())
+}
+
+func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1).
+		WithLeaseTime(1)
+	var wg sync.WaitGroup
+
+	provisionListener := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	res.RemoveListener(provisionListener)
+
+	capacityListener := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(5)
+	res.GiveMe(5000)
+	wg.Wait()
+	assert.Equal(t, uint32(5000), res.Capacity())
+	res.RemoveListener(capacityListener)
+
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ReleasedEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(5)
+	res.SetSharedCapacity(0)
+	wg.Wait()
+}

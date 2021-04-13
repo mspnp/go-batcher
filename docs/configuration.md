@@ -53,13 +53,7 @@ After creation, you must call Start() on a Batcher to begin processing. You can 
 Creating a new Operation with all defaults might look like this...
 
 ```go
-operation := gobatcher.NewOperation(&watcher, cost, payload)
-```
-
-Creating with all available configuration options might look like this...
-
-```go
-operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
+operation := gobatcher.NewOperation(&watcher, cost, payload, allowBatch)
 ```
 
 - __watcher__ [REQUIRED]: To create a new Operation, you must pass a reference to a Watcher. When this Operation is put into a batch, it is to this Watcher that it will be raised.
@@ -68,7 +62,7 @@ operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
 
 - __payload__ [REQUIRED]: When you create a new Operation, you will provide a payload of type `interface{}`. This could be the entity you intend to write to the datastore, it could be a query that you intend to run, it could be a wrapper object containing a payload and metadata, or anything else that might be helpful so that you know what to process.
 
-- __AllowBatch__ [OPTIONAL]: If specified, the Operation is eligible to be batched with other Operations. Otherwise, it will be raised as a batch of a single Operation.
+- __allowBatch__ [REQUIRED]: Set to TRUE if the Operation is eligible to be batched with other Operations. Otherwise, it will be raised as a batch of a single Operation.
 
 ## Watcher Configuration
 

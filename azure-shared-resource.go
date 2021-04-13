@@ -20,6 +20,7 @@ type AzureSharedResource struct {
 	maxInterval      uint32
 	sharedCapacity   uint32
 	reservedCapacity uint32
+	leaseTime        uint32
 
 	// used for internal operations
 	leaseManager leaseManager
@@ -123,6 +124,19 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 	return r
 }
 
+// You may provide a lease time in seconds. This defaults to 15 seconds. This is passed to the lease call made in Azure provided it is between
+// 15 and 60 seconds. If you provide a lower value, 15 seconds will be used. If you provide a greater value, 60 seconds will be used. If you are
+// using WithMocks, this constaint on the time will the ignored.
+func (r *AzureSharedResource) WithLeaseTime(val uint32) *AzureSharedResource {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError{})
+	}
+	r.leaseTime = val
+	return r
+}
+
 // This returns the maximum capacity that could ever be obtained by the rate limiter. It is `SharedCapacity + ReservedCapacity`.
 func (r *AzureSharedResource) MaxCapacity() uint32 {
 	return atomic.LoadUint32(&r.sharedCapacity) + atomic.LoadUint32(&r.reservedCapacity)
@@ -140,6 +154,7 @@ func (r *AzureSharedResource) SetSharedCapacity(capacity uint32) {
 
 func (r *AzureSharedResource) SetReservedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.reservedCapacity, capacity)
+	r.calc()
 }
 
 func (r *AzureSharedResource) calc() {
@@ -238,6 +253,7 @@ func (r *AzureSharedResource) setPartitionId(index uint32, id string) {
 	defer r.partlock.Unlock()
 
 	// set the id
+	// NOTE: provisioning only happens inside the Loop, so the partition index should always be valid
 	r.partitions[index] = &id
 
 }
@@ -249,7 +265,10 @@ func (r *AzureSharedResource) clearPartitionId(index uint32) {
 	defer r.partlock.Unlock()
 
 	// clear the id
-	r.partitions[index] = nil
+	// NOTE: clearing happens outside the Loop, so the partition could have already been truncated making the index is too high
+	if int(index) < len(r.partitions) {
+		r.partitions[index] = nil
+	}
 
 }
 
@@ -266,7 +285,11 @@ func (r *AzureSharedResource) provisionBlobs(ctx context.Context) {
 		r.emit(ErrorEvent, count, "only 500 partitions were created as this is the max supported", nil)
 		count = 500
 	}
-	r.partitions = make([]*string, count)
+
+	// copy into a new partition list
+	partitions := make([]*string, count)
+	copy(partitions, r.partitions)
+	r.partitions = partitions
 
 	// emit start
 	r.emit(ProvisionStartEvent, count, "start blob provisioning", nil)
@@ -301,21 +324,21 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 	if r.factor == 0 {
 		r.factor = 1 // assume 1:1
 	}
-	if r.sharedCapacity < 1 {
+	if r.sharedCapacity == 0 {
 		err = UndefinedSharedCapacityError{}
 		return
 	}
-	if r.maxInterval < 1 {
-		r.maxInterval = 500 // default to 500 ms
+	if r.maxInterval == 0 {
+		r.maxInterval = 500 // default to 500ms
+	}
+	if r.leaseTime == 0 {
+		r.leaseTime = 15 // default to 15s
 	}
 
 	// provision the container
 	if err = r.leaseManager.provision(ctx); err != nil {
 		return
 	}
-
-	// announce starting capacity
-	go r.calc()
 
 	// prepare for shutdown
 	r.shutdown.Add(1)
@@ -343,6 +366,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 				return
 			case <-r.provision:
 				r.provisionBlobs(ctx)
+				r.calc()
 			default:
 				// continue
 			}
@@ -358,7 +382,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 
 				// attempt to allocate the partition
 				id := fmt.Sprint(uuid.New())
-				leaseTime := r.leaseManager.leasePartition(ctx, id, index)
+				leaseTime := r.leaseManager.leasePartition(ctx, id, index, r.leaseTime)
 				if leaseTime == 0 {
 					continue Loop
 				}
@@ -374,7 +398,7 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 				// mark the partition as allocated
 				r.setPartitionId(index, id)
 				r.emit(AllocatedEvent, int(index), "", nil)
-				go r.calc()
+				r.calc()
 
 			}
 

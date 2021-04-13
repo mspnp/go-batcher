@@ -26,6 +26,7 @@ func (r *ProvisionedResource) Capacity() uint32 {
 
 func (r *ProvisionedResource) SetCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.maxCapacity, capacity)
+	r.emit(CapacityEvent, int(capacity), "", nil)
 }
 
 func (r *ProvisionedResource) GiveMe(target uint32) {

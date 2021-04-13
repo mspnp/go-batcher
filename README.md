@@ -273,6 +273,10 @@ Using default settings, each instance of AzureSharedResource will make a single 
 
 However, this is a maximum cost - actual costs in many cases will be much lower as there are only storage operations when additional capacity is needed.
 
+### Changing Capacity
+
+Both rate limiters support changing capacity after Start(). For ProvisionedResource, you can call `SetCapacity(newcap)`. For AzureSharedResource, you can call `SetSharedCapacity(newcap)` and `SetReservedCapacity(newcap)`. If you change SharedCapacity, to a higher value than previously seen, realize it will need to provision blobs (per SharedCapacity divided by Factor) before it can return to its normal cycle of procuring partitions for capacity.
+
 ## Determining Cost
 
 A Batcher with a rate limiter depends on each operation having a cost. The following documents provide you with assistance on determining what values you should use for cost.

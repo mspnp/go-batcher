@@ -1,7 +1,6 @@
 package batcher
 
-// TODO add docs to support this PR
-// TODO test in a real scenario
+// TODO fix problem where partitions are getting wiped when inc/dec
 
 import (
 	"sync"
@@ -469,7 +468,7 @@ func (r *Batcher) Start() (err error) {
 			Fill:
 				for {
 					// NOTE: by requiring consumed to be higher than capacity we ensure the process always dispatches at least 1 operation
-					if enforceCapacity && consumed > capacity {
+					if enforceCapacity && (capacity == 0 || consumed > capacity) {
 						break Fill
 					}
 					select {
