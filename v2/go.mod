@@ -1,4 +1,4 @@
-module github.com/plasne/go-batcher
+module github.com/plasne/go-batcher/v2
 
 go 1.16
 
