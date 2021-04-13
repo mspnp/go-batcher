@@ -9,7 +9,7 @@ const (
 	rateLimiterPhaseStopped
 )
 
-type RateLimiter interface {
+type IRateLimiter interface {
 	Provision(ctx context.Context) error
 	MaxCapacity() uint32
 	Capacity() uint32

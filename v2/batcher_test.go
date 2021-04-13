@@ -29,7 +29,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.NoOperationError{}, err, "expect a no-operation error")
+		assert.Equal(t, gobatcher.NoOperationError, err, "expect a no-operation error")
 	})
 
 	t.Run("operations require a watcher", func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.NoWatcherError{}, err, "expect a no-watcher error")
+		assert.Equal(t, gobatcher.NoWatcherError, err, "expect a no-watcher error")
 	})
 
 	t.Run("operations cannot exceed max capacity (provisioned)", func(t *testing.T) {
@@ -56,7 +56,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.TooExpensiveError{}, err, "expect a too-expensive-error error")
+		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
 	})
 
 	t.Run("operations cannot exceed max capacity (shared)", func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.TooExpensiveError{}, err, "expect a too-expensive-error error")
+		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
 	})
 
 	t.Run("operations cannot be attempted more than x times", func(t *testing.T) {
@@ -96,7 +96,7 @@ func TestEnqueue(t *testing.T) {
 					if eerr != nil {
 						_ = eerr.Error() // improves code coverage
 					}
-					assert.Equal(t, gobatcher.TooManyAttemptsError{}, eerr, "expect the error to be too-many-attempts")
+					assert.Equal(t, gobatcher.TooManyAttemptsError, eerr, "expect the error to be too-many-attempts")
 					return
 				}
 				if attempts > 8 {
@@ -196,7 +196,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.BufferFullError{}, err, "expecting the buffer to be full")
+		assert.Equal(t, gobatcher.BufferFullError, err, "expecting the buffer to be full")
 	})
 
 }
@@ -516,15 +516,6 @@ func TestBatcherPause(t *testing.T) {
 
 func TestBatcherStart(t *testing.T) {
 
-	t.Run("start without using new fails", func(t *testing.T) {
-		batcher := gobatcher.Batcher{}
-		err := batcher.Start()
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Error(t, gobatcher.BufferNotAllocated{}, err, "expecting the startup to fail since the buffer was never allocated")
-	})
-
 	t.Run("start is callable only once", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
 		var err1, err2 error
@@ -539,12 +530,10 @@ func TestBatcherStart(t *testing.T) {
 			wg.Done()
 		}()
 		wg.Wait()
-		if e, ok := err1.(gobatcher.BatcherImproperOrderError); ok && err2 == nil {
-			// valid response
-			_ = e.Error() // improves code coverage
-		} else if e, ok := err2.(gobatcher.BatcherImproperOrderError); ok && err1 == nil {
-			// valid response
-			_ = e.Error() // improves code coverage
+		if err1 != nil {
+			assert.Equal(t, gobatcher.ImproperOrderError, err1)
+		} else if err2 != nil {
+			assert.Equal(t, gobatcher.ImproperOrderError, err2)
 		} else {
 			t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
 		}
