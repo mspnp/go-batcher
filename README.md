@@ -289,8 +289,10 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 
 - This tool was originally designed to limit transactions against Azure Cosmos which has a cost model expressed as a single composite value (Request Unit). For datastores that might have more granular capacities, it would be nice to be able to provision Batcher with all those capacities and have an enqueue method that supports those costs. For example, memory, CPU, disk, network, etc. might all have separate capacities and individual queries might have individual costs.
 
-- There is currently no way to change capacity in the rate limiters once they are provisioned, but there is no identified use-case yet for this feature.
-
 - There is currently not a good way to model a datastore that autoscales but might require some time to increase capacity. Ideally something that allowed for capacity to increase by "no more than x amount over y time" would be helpful. This could be a rate limiter or a feature that is added to existing rate limiters.
 
 - The pause logic is an existing feature that delays new batches for a fixed amount of time, but it might be nice to have an exponential back-off.
+
+- Currently the only shared capacity rate limiter is for Azure. It would be nice to add support for Zookeeper, Consul, etcd, redis/redsync, or similar.
+
+- There is currently no way to prioritize Operations so they are released before other Batches, but now that the Buffer is a double linked list, this would be possible.

@@ -49,7 +49,7 @@ func init() {
 
 	// allow for flags to override env
 	flag.IntVar(&flagPort, "port", 0, "Determines the port to listen for HTTP requests. This overrides PORT.")
-	flag.IntVar(&flagCapacity, "capacity", 0, "Determines the capacity to shared. This overrides CAPACITY.")
+	flag.IntVar(&flagCapacity, "capacity", -1, "Determines the capacity to shared. This overrides CAPACITY.")
 
 	// seed the random number generator
 	rand.Seed(time.Now().UnixNano())
@@ -62,7 +62,7 @@ func main() {
 	// complete configuration
 	flag.Parse()
 	PORT := goconfig.AsInt().TrySetValue(flagPort).TrySetByEnv("PORT").DefaultTo(8080).Print().Value()
-	CAPACITY := goconfig.AsInt().TrySetValue(flagCapacity).TrySetByEnv("CAPACITY").DefaultTo(10000).Print().Value()
+	CAPACITY := goconfig.AsInt().SetEmpty(-1).TrySetValue(flagCapacity).TrySetByEnv("CAPACITY").DefaultTo(10000).Print().Value()
 	AZBLOB_ACCOUNT := goconfig.AsString().TrySetByEnv("AZBLOB_ACCOUNT").Print().Require().Value()
 	AZBLOB_KEY := goconfig.AsString().TrySetByEnv("AZBLOB_KEY").PrintMasked().Require().Value()
 	AZBLOB_CONTAINER := goconfig.AsString().TrySetByEnv("AZBLOB_CONTAINER").Print().Require().Value()
