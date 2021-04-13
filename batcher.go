@@ -1,7 +1,5 @@
 package batcher
 
-// TODO fix problem where partitions are getting wiped when inc/dec
-
 import (
 	"sync"
 	"time"
