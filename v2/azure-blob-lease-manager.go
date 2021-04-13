@@ -19,8 +19,9 @@ type azureBlobLeaseManager struct {
 	containerName *string
 
 	// internal properties
-	container IAzureContainer
-	blob      IAzureBlob
+	container  IAzureContainer
+	blob       IAzureBlob
+	mocksInUse bool
 }
 
 func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string) *azureBlobLeaseManager {
@@ -35,6 +36,7 @@ func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string
 func (m *azureBlobLeaseManager) withMocks(container IAzureContainer, blob IAzureBlob) *azureBlobLeaseManager {
 	m.container = container
 	m.blob = blob
+	m.mocksInUse = true
 	return m
 }
 
@@ -135,12 +137,19 @@ func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int)
 	return
 }
 
-func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
-	var secondsToLease int32 = 15
+func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, index uint32, secondsToLease uint32) (leaseTime time.Duration) {
+
+	// constrain the secondsToLease (Azure only supports 15-60 seconds)
+	switch {
+	case !m.mocksInUse && secondsToLease < 15:
+		secondsToLease = 15
+	case !m.mocksInUse && secondsToLease > 60:
+		secondsToLease = 60
+	}
 
 	// attempt to allocate the partition
 	blob := m.getBlob(int(index))
-	_, err := blob.AcquireLease(ctx, id, secondsToLease, azblob.ModifiedAccessConditions{})
+	_, err := blob.AcquireLease(ctx, id, int32(secondsToLease), azblob.ModifiedAccessConditions{})
 	if err != nil {
 		if serr, ok := err.(azblob.StorageError); ok {
 			switch serr.ServiceCode() {

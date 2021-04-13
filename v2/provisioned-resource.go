@@ -1,6 +1,9 @@
 package batcher
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 type ProvisionedResource struct {
 	eventer
@@ -13,16 +16,17 @@ func NewProvisionedResource(capacity uint32) *ProvisionedResource {
 	}
 }
 
-func (r *ProvisionedResource) Provision(ctx context.Context) error {
-	return nil
-}
-
 func (r *ProvisionedResource) MaxCapacity() uint32 {
-	return r.maxCapacity
+	return atomic.LoadUint32(&r.maxCapacity)
 }
 
 func (r *ProvisionedResource) Capacity() uint32 {
-	return r.maxCapacity
+	return atomic.LoadUint32(&r.maxCapacity)
+}
+
+func (r *ProvisionedResource) SetCapacity(capacity uint32) {
+	atomic.StoreUint32(&r.maxCapacity, capacity)
+	r.emit(CapacityEvent, int(capacity), "", nil)
 }
 
 func (r *ProvisionedResource) GiveMe(target uint32) {

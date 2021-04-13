@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	gobatcher "github.com/plasne/go-batcher"
+	gobatcher "github.com/plasne/go-batcher/v2"
 	goconfig "github.com/plasne/go-config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
