@@ -14,12 +14,6 @@ const (
 	batcherPhaseStopped
 )
 
-const (
-	AuditMsgFailureOnTargetAndInflight = "an audit revealed that the target and inflight should both be zero but neither was."
-	AuditMsgFailureOnTarget            = "an audit revealed that the target should be zero but was not."
-	AuditMsgFailureOnInflight          = "an audit revealed that inflight should be zero but was not."
-)
-
 type IBatcher interface {
 	ieventer
 	WithRateLimiter(rl RateLimiter) IBatcher
@@ -30,13 +24,9 @@ type IBatcher interface {
 	WithPauseTime(val time.Duration) IBatcher
 	WithErrorOnFullBuffer() IBatcher
 	WithEmitBatch() IBatcher
-	WithEmitFlush() IBatcher
-	WithEmitRequest() IBatcher
-	WithMaxConcurrentBatches(val uint32) IBatcher
 	Enqueue(op IOperation) error
 	Pause()
 	Flush()
-	Inflight() uint32
 	OperationsInBuffer() uint32
 	NeedsCapacity() uint32
 	Start() (err error)
@@ -47,24 +37,19 @@ type Batcher struct {
 	eventer
 
 	// configuration items that should not change after Start()
-	ratelimiter          RateLimiter
-	flushInterval        time.Duration
-	capacityInterval     time.Duration
-	auditInterval        time.Duration
-	maxOperationTime     time.Duration
-	pauseTime            time.Duration
-	errorOnFullBuffer    bool
-	emitBatch            bool
-	emitFlush            bool
-	emitRequest          bool
-	maxConcurrentBatches uint32
+	ratelimiter       RateLimiter
+	flushInterval     time.Duration
+	capacityInterval  time.Duration
+	auditInterval     time.Duration
+	maxOperationTime  time.Duration
+	pauseTime         time.Duration
+	errorOnFullBuffer bool
+	emitBatch         bool
 
 	// used for internal operations
-	buffer               IBuffer       // operations that are in the queue
-	pause                chan struct{} // contains a record if batcher is paused
-	flush                chan struct{} // contains a record if batcher should flush
-	inflight             chan struct{} // tracks the number of inflight batches
-	lastFlushWithRecords time.Time     // tracks the last time records were flushed
+	buffer chan IOperation
+	pause  chan bool
+	flush  chan bool
 
 	// manage the phase
 	phaseMutex sync.Mutex
@@ -85,9 +70,9 @@ func NewBatcher() IBatcher {
 
 func NewBatcherWithBuffer(maxBufferSize uint32) IBatcher {
 	r := &Batcher{}
-	r.buffer = NewBuffer(maxBufferSize)
-	r.pause = make(chan struct{}, 1)
-	r.flush = make(chan struct{}, 1)
+	r.buffer = make(chan IOperation, maxBufferSize)
+	r.pause = make(chan bool, 1)
+	r.flush = make(chan bool, 1)
 	return r
 }
 
@@ -155,27 +140,6 @@ func (r *Batcher) WithEmitBatch() IBatcher {
 	return r
 }
 
-// Generally you do not want this setting for production, but it can be helpful for unit tests to raise an event every time
-// a flush is started and completed.
-func (r *Batcher) WithEmitFlush() IBatcher {
-	r.emitFlush = true
-	return r
-}
-
-// Generally you do not want this setting for production, but it can be helpful for unit tests to raise an event every time
-// a request is made for capacity.
-func (r *Batcher) WithEmitRequest() IBatcher {
-	r.emitRequest = true
-	return r
-}
-
-// Setting this option limits the number of batches that can be processed at a time to the provided value.
-func (r *Batcher) WithMaxConcurrentBatches(val uint32) IBatcher {
-	r.maxConcurrentBatches = val
-	r.inflight = make(chan struct{}, val)
-	return r
-}
-
 func (r *Batcher) applyDefaults() {
 	if r.flushInterval <= 0 {
 		r.flushInterval = 100 * time.Millisecond
@@ -223,7 +187,18 @@ func (r *Batcher) Enqueue(op IOperation) error {
 	r.incTarget(int(op.Cost()))
 
 	// put into the buffer
-	return r.buffer.Enqueue(op, r.errorOnFullBuffer)
+	if r.errorOnFullBuffer {
+		select {
+		case r.buffer <- op:
+			// successfully queued
+		default:
+			return BufferFullError{}
+		}
+	} else {
+		r.buffer <- op
+	}
+
+	return nil
 }
 
 // Call this method when your datastore is throwing transient errors. This pauses the processing loop to ensure that you are not flooding
@@ -240,7 +215,7 @@ func (r *Batcher) Pause() {
 
 	// pause
 	select {
-	case r.pause <- struct{}{}:
+	case r.pause <- true:
 		// successfully set the pause
 	default:
 		// pause was already set
@@ -264,7 +239,7 @@ func (r *Batcher) Flush() {
 
 	// flush
 	select {
-	case r.flush <- struct{}{}:
+	case r.flush <- true:
 		// successfully set the flush
 	default:
 		// flush was already set
@@ -275,25 +250,29 @@ func (r *Batcher) Flush() {
 // This tells you how many operations are still in the buffer. This does not include operations that have been sent back to the Watcher as part
 // of a batch for processing.
 func (r *Batcher) OperationsInBuffer() uint32 {
-	return r.buffer.Size()
+	return uint32(len(r.buffer))
 }
 
 // This tells you how much capacity the Batcher believes it needs to process everything outstanding. Outstanding operations include those in
 // the buffer and operations and any that have been sent as a batch but not marked done yet.
 func (r *Batcher) NeedsCapacity() uint32 {
+	return r.getTarget()
+}
+
+func (r *Batcher) getTarget() uint32 {
 	r.targetMutex.RLock()
 	defer r.targetMutex.RUnlock()
 	return r.target
 }
 
-func (r *Batcher) confirmTargetIsZero() bool {
+func (r *Batcher) trySetTargetToZero() bool {
 	r.targetMutex.Lock()
 	defer r.targetMutex.Unlock()
 	if r.target > 0 {
 		r.target = 0
-		return false
-	} else {
 		return true
+	} else {
+		return false
 	}
 }
 
@@ -309,88 +288,6 @@ func (r *Batcher) incTarget(val int) {
 	} // else is val=0, do nothing
 }
 
-func (r *Batcher) tryReserveBatchSlot() bool {
-	if r.maxConcurrentBatches == 0 {
-		return true
-	}
-	select {
-	case r.inflight <- struct{}{}:
-		return true
-	default:
-		return false
-	}
-}
-
-func (r *Batcher) releaseBatchSlot() {
-	if r.maxConcurrentBatches > 0 {
-		<-r.inflight
-	}
-}
-
-func (r *Batcher) confirmInflightIsZero() bool {
-	isZero := true
-	for {
-		select {
-		case <-r.inflight:
-			isZero = false
-		default:
-			return isZero
-		}
-	}
-}
-
-func (r *Batcher) Inflight() uint32 {
-	return uint32(len(r.inflight))
-}
-
-func (r *Batcher) processBatch(watcher IWatcher, batch []IOperation) {
-	if len(batch) == 0 {
-		return
-	}
-	r.lastFlushWithRecords = time.Now()
-
-	// raise event
-	if r.emitBatch {
-		r.emit(BatchEvent, len(batch), "", batch)
-	}
-
-	go func() {
-
-		// increment an attempt
-		for _, op := range batch {
-			op.MakeAttempt()
-		}
-
-		// process the batch
-		waitForDone := make(chan struct{})
-		go func() {
-			defer close(waitForDone)
-			watcher.ProcessBatch(batch)
-		}()
-
-		// the batch is "done" when the ProcessBatch func() finishes or the maxOperationTime is exceeded
-		maxOperationTime := r.maxOperationTime
-		if watcher.MaxOperationTime() > 0 {
-			maxOperationTime = watcher.MaxOperationTime()
-		}
-		select {
-		case <-waitForDone:
-		case <-time.After(maxOperationTime):
-		}
-
-		// decrement target
-		var total int = 0
-		for _, op := range batch {
-			total += int(op.Cost())
-		}
-		r.incTarget(-total)
-
-		// remove from inflight
-		r.releaseBatchSlot()
-
-	}()
-}
-
 // Call this method to start the processing loop. The processing loop requests capacity at the CapacityInterval, organizes operations into
 // batches at the FlushInterval, and audits the capacity target at the AuditInterval.
 func (r *Batcher) Start() (err error) {
@@ -404,7 +301,7 @@ func (r *Batcher) Start() (err error) {
 	}
 
 	// ensure buffer was provisioned
-	if r.buffer == nil || r.buffer.Max() == 0 {
+	if r.buffer == nil {
 		err = BufferNotAllocated{}
 		return
 	}
@@ -416,6 +313,49 @@ func (r *Batcher) Start() (err error) {
 	capacityTimer := time.NewTicker(r.capacityInterval)
 	flushTimer := time.NewTicker(r.flushInterval)
 	auditTimer := time.NewTicker(r.auditInterval)
+
+	// define the func for flushing a batch
+	var lastFlushWithRecords time.Time
+	flush := func(watcher IWatcher, batch []IOperation) {
+		if len(batch) > 0 {
+			if r.emitBatch {
+				r.emit(BatchEvent, len(batch), "", batch)
+			}
+			lastFlushWithRecords = time.Now()
+			go func() {
+
+				// increment an attempt
+				for _, op := range batch {
+					op.MakeAttempt()
+				}
+
+				// process the batch
+				waitForDone := make(chan struct{})
+				go func() {
+					defer close(waitForDone)
+					watcher.ProcessBatch(batch)
+				}()
+
+				// the batch is "done" when the ProcessBatch func() finishes or the maxOperationTime is exceeded
+				maxOperationTime := r.maxOperationTime
+				if watcher.MaxOperationTime() > 0 {
+					maxOperationTime = watcher.MaxOperationTime()
+				}
+				select {
+				case <-waitForDone:
+				case <-time.After(maxOperationTime):
+				}
+
+				// decrement target
+				var total int = 0
+				for _, op := range batch {
+					total += int(op.Cost())
+				}
+				r.incTarget(-total)
+
+			}()
+		}
+	}
 
 	// prepare for shutdown
 	r.shutdown.Add(1)
@@ -429,7 +369,7 @@ func (r *Batcher) Start() (err error) {
 			capacityTimer.Stop()
 			flushTimer.Stop()
 			auditTimer.Stop()
-			r.buffer.Clear()
+			close(r.buffer)
 			r.emit(ShutdownEvent, 0, "", nil)
 			r.shutdown.Done()
 		}()
@@ -451,17 +391,10 @@ func (r *Batcher) Start() (err error) {
 
 			case <-auditTimer.C:
 				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
-				if r.buffer.Size() == 0 && time.Since(r.lastFlushWithRecords) > r.maxOperationTime {
-					targetIsZero := r.confirmTargetIsZero()
-					inflightIsZero := r.confirmInflightIsZero()
-					switch {
-					case !targetIsZero && !inflightIsZero:
-						r.emit(AuditFailEvent, 0, AuditMsgFailureOnTargetAndInflight, nil)
-					case !targetIsZero:
-						r.emit(AuditFailEvent, 0, AuditMsgFailureOnTarget, nil)
-					case !inflightIsZero:
-						r.emit(AuditFailEvent, 0, AuditMsgFailureOnInflight, nil)
-					default:
+				if len(r.buffer) < 1 && time.Since(lastFlushWithRecords) > r.maxOperationTime {
+					if r.trySetTargetToZero() {
+						r.emit(AuditFailEvent, 0, "an audit revealed that the target should be zero but was not.", nil)
+					} else {
 						r.emit(AuditPassEvent, 0, "", nil)
 					}
 				} else {
@@ -472,9 +405,7 @@ func (r *Batcher) Start() (err error) {
 				// ask for capacity
 				if r.ratelimiter != nil {
 					request := r.NeedsCapacity()
-					if r.emitRequest {
-						r.emit(RequestEvent, int(request), "", nil)
-					}
+					r.emit(RequestEvent, int(request), "", nil)
 					r.ratelimiter.GiveMe(request)
 				}
 
@@ -483,9 +414,6 @@ func (r *Batcher) Start() (err error) {
 
 			case <-r.flush:
 				// flush a percentage of the capacity (by default 10%)
-				if r.emitFlush {
-					r.emit(FlushStartEvent, 0, "", nil)
-				}
 
 				// determine the capacity
 				enforceCapacity := r.ratelimiter != nil
@@ -497,61 +425,46 @@ func (r *Batcher) Start() (err error) {
 				// if there are operations in the buffer, go up to the capacity
 				batches := make(map[IWatcher][]IOperation)
 				var consumed uint32 = 0
-
-				// reset the buffer cursor to the top of the buffer
-				op := r.buffer.Top()
-
+			Fill:
 				for {
-
 					// NOTE: by requiring consumed to be higher than capacity we ensure the process always dispatches at least 1 operation
 					if enforceCapacity && consumed > capacity {
-						break
+						break Fill
 					}
+					select {
+					case op := <-r.buffer:
 
-					// the buffer is empty or we are at the end
-					if op == nil {
-						break
-					}
-
-					// batch
-					switch {
-					case op.IsBatchable():
+						// process immediately or add to a batch
 						watcher := op.Watcher()
-						batch, ok := batches[watcher]
-						if (batch == nil || !ok) && !r.tryReserveBatchSlot() {
-							op = r.buffer.Skip()
-							continue // there is no batch slot available
-						}
-						consumed += op.Cost()
-						batch = append(batch, op)
-						max := watcher.MaxBatchSize()
-						if max > 0 && len(batch) >= int(max) {
-							r.processBatch(watcher, batch)
-							batches[watcher] = nil
+						if op == nil {
+							// op can be nil when the buffer is closed
+						} else if op.IsBatchable() {
+							consumed += op.Cost()
+							batch := batches[watcher]
+							batch = append(batch, op)
+							max := watcher.MaxBatchSize()
+							if max > 0 && len(batch) >= int(max) {
+								flush(watcher, batch)
+								batches[watcher] = nil
+							} else {
+								batches[watcher] = batch
+							}
 						} else {
-							batches[watcher] = batch
+							consumed += op.Cost()
+							flush(watcher, []IOperation{op})
 						}
-						op = r.buffer.Remove()
-					case r.tryReserveBatchSlot():
-						consumed += op.Cost()
-						watcher := op.Watcher()
-						r.processBatch(watcher, []IOperation{op})
-						op = r.buffer.Remove()
-					default:
-						// there is no batch slot available
-						op = r.buffer.Skip()
-					}
 
+					default:
+						// there is nothing in the buffer
+						break Fill
+					}
 				}
 
 				// flush all batches that were seen
 				for watcher, batch := range batches {
-					r.processBatch(watcher, batch)
+					flush(watcher, batch)
 				}
 
-				if r.emitFlush {
-					r.emit(FlushDoneEvent, 0, "", nil)
-				}
 			}
 		}
 
