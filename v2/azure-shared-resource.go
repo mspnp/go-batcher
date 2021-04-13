@@ -126,7 +126,7 @@ func (r *AzureSharedResource) WithMaxInterval(val uint32) *AzureSharedResource {
 
 // You may provide a lease time in seconds. This defaults to 15 seconds. This is passed to the lease call made in Azure provided it is between
 // 15 and 60 seconds. If you provide a lower value, 15 seconds will be used. If you provide a greater value, 60 seconds will be used. If you are
-// using WithMocks, this constaint on the time will the ignored.
+// using WithMocks, this constraint on the time will the ignored.
 func (r *AzureSharedResource) WithLeaseTime(val uint32) *AzureSharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
@@ -323,10 +323,6 @@ func (r *AzureSharedResource) Start(ctx context.Context) (err error) {
 	}
 	if r.factor == 0 {
 		r.factor = 1 // assume 1:1
-	}
-	if r.sharedCapacity == 0 {
-		err = UndefinedSharedCapacityError{}
-		return
 	}
 	if r.maxInterval == 0 {
 		r.maxInterval = 500 // default to 500ms

@@ -6,12 +6,6 @@ func (e UndefinedLeaseManagerError) Error() string {
 	return "a lease manager must be assigned."
 }
 
-type UndefinedSharedCapacityError struct{}
-
-func (e UndefinedSharedCapacityError) Error() string {
-	return "you must define a SharedCapacity."
-}
-
 type NoWatcherError struct{}
 
 func (e NoWatcherError) Error() string {

@@ -94,16 +94,6 @@ func TestAzureSRStart_CanOnlyCreateViaNew(t *testing.T) {
 	assert.Equal(t, gobatcher.UndefinedLeaseManagerError{}, err)
 }
 
-func TestAzureSRStart_SharedCapacityIsRequired(t *testing.T) {
-	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 0).
-		WithMocks(getMocks())
-	err := res.Start(context.Background())
-	if err != nil {
-		_ = err.Error() // improves code coverage
-	}
-	assert.Equal(t, gobatcher.UndefinedSharedCapacityError{}, err)
-}
-
 func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	container, blob := getMocks()
 	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10).
