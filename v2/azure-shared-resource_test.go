@@ -850,3 +850,41 @@ func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 	res.SetSharedCapacity(0)
 	wg.Wait()
 }
+
+func TestStartingWithZeroSharedCapacity(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 0).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+
+	var expectedCapacity int
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			assert.Equal(t, expectedCapacity, val)
+			wg.Done()
+		case gobatcher.ProvisionDoneEvent:
+			wg.Done()
+		}
+	})
+
+	wg.Add(2)
+	expectedCapacity = 0
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(0), res.MaxCapacity())
+
+	wg.Add(2)
+	expectedCapacity = 0
+	res.SetSharedCapacity(1000)
+	wg.Wait()
+	assert.Equal(t, uint32(1000), res.MaxCapacity())
+
+	wg.Add(1)
+	expectedCapacity = 1000
+	res.GiveMe(9999)
+	wg.Wait()
+	assert.Equal(t, uint32(1000), res.Capacity())
+	assert.Equal(t, uint32(1000), res.MaxCapacity())
+}
