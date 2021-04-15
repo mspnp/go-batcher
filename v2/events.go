@@ -21,4 +21,6 @@ const (
 	CreatedBlobEvent       = "created-blob"
 	FailedEvent            = "failed"
 	ErrorEvent             = "error"
+	FlushStartEvent        = "flush-start"
+	FlushDoneEvent         = "flush-done"
 )

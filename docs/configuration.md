@@ -42,7 +42,11 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
 
 - __WithPauseTime__ [DEFAULT: 500ms]: This determines how long the FlushInterval, CapacityInterval, and AuditIntervals are paused when Batcher.Pause() is called. Typically you would pause because the datastore cannot keep up with the volume of requests (if it happens maybe adjust your rate limiter).
 
+- __WithMaxConcurrentBatches__ [OPTIONAL]: If you specify this option, Batcher will ensure that the number of Inflight batches does not exceed this value. Batches are still only produced on the FlushInterval. When a batch is marked done, the concurrency slot is freed for another batch. If you do not specify this option, there is no limit to the number of batches that can be raised at a time (each running in a separate goroutine).
+
 - __WithErrorOnFullBuffer__ [OPTIONAL]: Normally the Enqueue() method will block if the buffer is full, however, you can set this configuration flag if you want it to return an error instead.
+
+- __WithEmitFlush__ [OPTIONAL]: There may be certain cases (for example, unit testing) when it is helpful to know when a flush starts (event: "flush-start") and when it is complete (event: "flush-done"). If you have a use-case for this, you can emit those events. This is off by default as this will generate a massive number of events.
 
 - __WithEmitBatch__ [OPTIONAL]: DO NOT USE IN PRODUCTION. For unit testing it may be useful to batches that are raised across all Watchers. Setting this flag causes a "batch" event to be emitted with the operations in a batch set as the metadata (see the sample). You would not want this in production because it will diminish performance but it will also allow anyone with access to the batcher to see operations raised whether they have access to the Watcher or not.
 
