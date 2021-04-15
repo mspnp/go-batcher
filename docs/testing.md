@@ -8,13 +8,80 @@ This section documents ways to facilitate unit testing when using Batcher. [Test
 
 ## Using mocks
 
-There are interfaces provided for Batcher, Watcher, Operation, AzureSharedResource, ProvisionedResource, RateLimiter
+There are public interfaces provided for Batcher, Watcher, Operation, AzureSharedResource, ProvisionedResource, and RateLimiter to use for mocking. To mock using Testify, you can follow this pattern:
 
-Interfaces IBatcher, IWatcher and IOperation have beed added and can be used to facilitate unit testing by creating mocks, with the consideration that mock implementation will be needed for all the features that are used.
+1. Implement the mock interface (for example, a mock Watcher):
+
+    ```go
+    import (
+        "testing"
+        "time"
+
+        gobatcher "github.com/plasne/go-batcher/v2"
+        "github.com/stretchr/testify/assert"
+        "github.com/stretchr/testify/mock"
+    )
+
+    type mockWatcher struct {
+        mock.Mock
+    }
+
+    func (w *mockWatcher) WithMaxAttempts(val uint32) gobatcher.Watcher {
+        args := w.Called(val)
+        return args.Get(0).(gobatcher.Watcher)
+    }
+
+    func (w *mockWatcher) WithMaxBatchSize(val uint32) gobatcher.Watcher {
+        args := w.Called(val)
+        return args.Get(0).(gobatcher.Watcher)
+    }
+
+    func (w *mockWatcher) WithMaxOperationTime(val time.Duration) gobatcher.Watcher {
+        args := w.Called(val)
+        return args.Get(0).(gobatcher.Watcher)
+    }
+
+    func (w *mockWatcher) MaxAttempts() uint32 {
+        args := w.Called()
+        return args.Get(0).(uint32)
+    }
+
+    func (w *mockWatcher) MaxBatchSize() uint32 {
+        args := w.Called()
+        return args.Get(0).(uint32)
+    }
+
+    func (w *mockWatcher) MaxOperationTime() time.Duration {
+        args := w.Called()
+        return args.Get(0).(time.Duration)
+    }
+
+    func (w *mockWatcher) ProcessBatch(batch []gobatcher.Operation) {
+        w.Called(batch)
+    }
+    ```
+
+1. Write a test method mocking any calls that are used in the underlying methods (for example, Enqueue calls MaxAttempts):
+
+    ```go
+    func TestEnqueueOnlyOnce(t *testing.T) {
+        batcher := gobatcher.NewBatcher()
+        watcher := &mockWatcher{}
+        watcher.On("MaxAttempts").Return(uint32(1))
+        op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+        op.MakeAttempt() // fake a previous attempt
+        err := batcher.Enqueue(op)
+        assert.Error(t, err, "should only be allowed one time")
+    }
+    ```
 
 ### AzureSharedResource
 
 One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account and specifically a mock blob and a mock container.
+
+### RateLimiter
+
+This is provided so you can write your own.
 
 ## Using events
 
