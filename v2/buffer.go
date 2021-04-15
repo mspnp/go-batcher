@@ -5,21 +5,22 @@ import (
 	"sync"
 )
 
-type Buffer interface {
-	Size() uint32
-	Max() uint32
-	Top() Operation
-	Skip() Operation
-	Remove() Operation
-	Enqueue(Operation, bool) error
-	Clear()
+type ibuffer interface {
+	size() uint32
+	max() uint32
+	top() Operation
+	skip() Operation
+	remove() Operation
+	enqueue(Operation, bool) error
+	clear()
 }
 
 type buffer struct {
+	// WARNING: internal properties; only use the methods
 	lock    *sync.Mutex
 	notFull *sync.Cond
-	size    uint32
-	max     uint32
+	len     uint32
+	cap     uint32
 	head    *links
 	tail    *links
 	cursor  *links
@@ -31,35 +32,35 @@ type links struct {
 	nxt *links
 }
 
-// FOR INTERNAL USE ONLY. This method creates a new Buffer. The Buffer is a double-linked list holding the Operations that are
-// enqueued. All methods in the Buffer are threadsafe since they can be called from Batcher.Enqueue and the Batcher main processing
+// This method creates a new buffer. The Buffer is a double-linked list holding the Operations that are
+// enqueued. All methods in the buffer are threadsafe since they can be called from Batcher.Enqueue and the Batcher main processing
 // loop which are commonly in different goroutines.
-func NewBuffer(max uint32) Buffer {
+func newBuffer(max uint32) ibuffer {
 	lock := &sync.Mutex{}
 	return &buffer{
 		lock:    lock,
 		notFull: sync.NewCond(lock),
-		max:     max,
+		cap:     max,
 	}
 }
 
-// This returns the number of Operations in the Buffer.
-func (b *buffer) Size() uint32 {
+// This returns the number of Operations in the buffer.
+func (b *buffer) size() uint32 {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	return b.size
+	return b.len
 }
 
-// This returns the maximum number of Operations that can be held in the Buffer.
-func (b *buffer) Max() uint32 {
+// This returns the maximum number of Operations that can be held in the buffer.
+func (b *buffer) max() uint32 {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	return b.max
+	return b.cap
 }
 
 // This sets the cursor position to the top of the Buffer and returns the head Operation. This method will return nil if there
 // is no head Operation. Batcher's main processing loop runs on a single thread so having a single cursor is appropriate.
-func (b *buffer) Top() Operation {
+func (b *buffer) top() Operation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	b.cursor = b.head
@@ -69,9 +70,9 @@ func (b *buffer) Top() Operation {
 	return b.cursor.op
 }
 
-// This advances the cursor position leaving the current record in the Buffer. It returns the Operation at the new cursor
+// This advances the cursor position leaving the current record in the buffer. It returns the Operation at the new cursor
 // position. This method will return nil if there are no more Operations in the Buffer.
-func (b *buffer) Skip() Operation {
+func (b *buffer) skip() Operation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if b.cursor == nil {
@@ -84,9 +85,9 @@ func (b *buffer) Skip() Operation {
 	return b.cursor.op
 }
 
-// This advances the cursor position removing the current record from the Buffer. It returns the Operation at the new cursor
+// This advances the cursor position removing the current record from the buffer. It returns the Operation at the new cursor
 // position. This method will return nil if there are no more Operations in the Buffer.
-func (b *buffer) Remove() Operation {
+func (b *buffer) remove() Operation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -115,12 +116,12 @@ func (b *buffer) Remove() Operation {
 		b.cursor = nil
 	}
 
-	if b.size == 0 {
+	if b.len == 0 {
 		// NOTE: There should be no way to reach this panic unless there was a coding error
 		panic(errors.New("removing from empty buffer is not allowed"))
 	}
 	b.notFull.Signal()
-	b.size--
+	b.len--
 
 	if b.cursor == nil {
 		return nil
@@ -130,11 +131,11 @@ func (b *buffer) Remove() Operation {
 
 // This allows you to add an Operation to the tail of the Buffer. If the Buffer is full and errorOnFull is false, this method
 // is blocking until the Operation can be added. If the Buffer is full and errorOnFull is true, this method returns BufferFullError.
-func (b *buffer) Enqueue(op Operation, errorOnFull bool) error {
+func (b *buffer) enqueue(op Operation, errorOnFull bool) error {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	for b.size >= b.max {
+	for b.len >= b.cap {
 		if errorOnFull {
 			return BufferFullError
 		}
@@ -155,17 +156,17 @@ func (b *buffer) Enqueue(op Operation, errorOnFull bool) error {
 		b.tail = link
 	}
 
-	b.size++
+	b.len++
 
 	return nil
 }
 
 // This clears the Buffer allowing all Operations to be garbage collected.
-func (b *buffer) Clear() {
+func (b *buffer) clear() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	b.head = nil
 	b.tail = nil
 	b.cursor = nil
-	b.size = 0
+	b.len = 0
 }
