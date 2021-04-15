@@ -15,7 +15,7 @@ import (
 type AzureSharedResource interface {
 	ieventer
 	RateLimiter
-	WithMocks(container IAzureContainer, blob IAzureBlob) AzureSharedResource
+	WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource
 	WithMasterKey(val string) AzureSharedResource
 	WithFactor(val uint32) AzureSharedResource
 	WithReservedCapacity(val uint32) AzureSharedResource
@@ -70,7 +70,7 @@ func NewAzureSharedResource(accountName, containerName string, sharedCapacity ui
 }
 
 // This allows you to provide mocked objects for container and blob for unit tests.
-func (r *azureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) AzureSharedResource {
+func (r *azureSharedResource) WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != batcherPhaseUninitialized {
