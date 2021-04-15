@@ -77,9 +77,9 @@ There are public interfaces provided for Batcher, Watcher, Operation, AzureShare
 
 ### AzureSharedResource
 
-One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account (specifically a mock blockblob and a mock container). This allows you to unit test without needing a real Azure Storage Account.
+One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account (specifically a mock blob and a mock container). This allows you to unit test without needing a real Azure Storage Account.
 
-1. Implement the mock interface for blockblob and container:
+1. Implement the mock interface for blob and container:
 
     ```go
     type mockBlob struct {
@@ -111,30 +111,37 @@ One of the configuration options for AzureSharedResource is `withMocks()`. For u
     }
     ```
 
-1.
+1. Write a test method mocking any calls that are used in the underlying methods (for example, Start calls container.Create and blob.Upload):
 
     ```go
-    func TestStuff(t *testing.T) {
+    func TestStart(t *testing.T) {
         container := &mockContainer{}
+        container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
         blob := &mockBlob{}
+        blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+            Return(nil, nil).Times(10)
         res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).WithMocks(container, blob)
         var wg sync.WaitGroup
         wg.Add(1)
         res.AddListener(func(event string, val int, msg string, metadata interface{}) {
             switch event {
+            case gobatcher.ErrorEvent:
+                assert.FailNow(t, "expecting no errors")
             case gobatcher.ProvisionDoneEvent:
                 wg.Done()
             }
         })
         err := res.Start(context.Background())
         assert.NoError(t, err)
-        wg.Wait()
+        wg.Wait() // wait for provisioning (which is an async process) to finish
+        container.AssertExpectations(t)
+        blob.AssertExpectations(t)
     }
     ```
 
 ### RateLimiter
 
-This is provided so you can write your own.
+The RateLimiter interface
 
 ## Using events
 
