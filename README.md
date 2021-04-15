@@ -200,7 +200,7 @@ func main() {
     http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
 
         // create a batch watcher
-        watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+        watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
             // process the batch
         }).WithMaxAttempts(3)
 

@@ -79,7 +79,7 @@ operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
 Creating a new Watcher with all defaults might look like this...
 
 ```go
-watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
     // your processing function goes here
 })
 ```
@@ -87,7 +87,7 @@ watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
 Creating with all available configuration options might look like this...
 
 ```go
-watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
     // your processing function goes here
 }).
     WithMaxAttempts(3).
