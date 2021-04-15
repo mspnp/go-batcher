@@ -160,11 +160,13 @@ func (r *azureSharedResource) Capacity() uint32 {
 	return atomic.LoadUint32(&r.capacity) + atomic.LoadUint32(&r.reservedCapacity)
 }
 
+// This allows you to set the SharedCapacity to a different value after the RateLimiter has started.
 func (r *azureSharedResource) SetSharedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.sharedCapacity, capacity)
 	r.scheduleProvision()
 }
 
+// This allows you to set the ReservedCapacity to a different value after the RateLimiter has started.
 func (r *azureSharedResource) SetReservedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.reservedCapacity, capacity)
 	r.calc()
