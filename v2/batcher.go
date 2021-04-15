@@ -543,7 +543,7 @@ func (r *batcher) Start() (err error) {
 						break
 					}
 
-					// NOTE: by requiring consumed to be higher than capacity we ensure the process always dispatches at least 1 operation
+					// enforce capacity
 					if enforceCapacity && consumed >= capacity {
 						break
 					}
