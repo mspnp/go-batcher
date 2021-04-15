@@ -19,8 +19,8 @@ type azureBlobLeaseManager struct {
 	containerName *string
 
 	// internal properties
-	container IAzureContainer
-	blob      IAzureBlob
+	container azureContainer
+	blob      azureBlob
 }
 
 func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string) *azureBlobLeaseManager {
@@ -32,7 +32,7 @@ func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) withMocks(container IAzureContainer, blob IAzureBlob) *azureBlobLeaseManager {
+func (m *azureBlobLeaseManager) withMocks(container azureContainer, blob azureBlob) *azureBlobLeaseManager {
 	m.container = container
 	m.blob = blob
 	return m
@@ -93,7 +93,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 	return
 }
 
-func (m *azureBlobLeaseManager) getBlob(index int) IAzureBlob {
+func (m *azureBlobLeaseManager) getBlob(index int) azureBlob {
 	if m.blob != nil {
 		return m.blob
 	} else {
