@@ -163,7 +163,7 @@ func main() {
 		wg.Add(total)
 
 		// create a batch watcher
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			len := len(batch)
 			log.Info().Msgf("inserting a batch of %v records...", len)
 			optime := rand.Intn(1000)
