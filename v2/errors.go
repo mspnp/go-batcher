@@ -2,6 +2,12 @@ package batcher
 
 import "errors"
 
+const (
+	AuditMsgFailureOnTargetAndInflight = "an audit revealed that the target and inflight should both be zero but neither was."
+	AuditMsgFailureOnTarget            = "an audit revealed that the target should be zero but was not."
+	AuditMsgFailureOnInflight          = "an audit revealed that inflight should be zero but was not."
+)
+
 var (
 	UndefinedLeaseManagerError   = errors.New("a lease manager must be assigned.")
 	UndefinedSharedCapacityError = errors.New("you must define a SharedCapacity.")
