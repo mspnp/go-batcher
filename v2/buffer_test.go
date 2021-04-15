@@ -17,28 +17,27 @@ func TestBuffer_New(t *testing.T) {
 
 func TestBuffer_Enqueue(t *testing.T) {
 	buffer := gobatcher.NewBuffer(1)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 	op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-	ref := op.(*gobatcher.Operation)
-	err := buffer.Enqueue(ref, false)
+	err := buffer.Enqueue(op, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 }
 
 func TestBuffer_ErrorOnFull(t *testing.T) {
 	var err error
 	buffer := gobatcher.NewBuffer(1)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
-	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op1, true)
 	assert.Nil(t, err, "expecting no error on enqueue")
-	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op2, true)
-	assert.Equal(t, gobatcher.BufferFullError{}, err, "expecting the buffer is full because it has a size of 1")
+	assert.Equal(t, gobatcher.BufferFullError, err, "expecting the buffer is full because it has a size of 1")
 }
 
 func TestBuffer_BlockOnFull(t *testing.T) {
 	buffer := gobatcher.NewBuffer(1)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 	done := make(chan struct{})
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
@@ -48,7 +47,7 @@ func TestBuffer_BlockOnFull(t *testing.T) {
 	}()
 	for i := 0; i < 2; i++ {
 		go func() {
-			op := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+			op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 			err := buffer.Enqueue(op, false)
 			assert.Nil(t, err, "expecting no error on enqueue")
 			wg.Done()
@@ -64,7 +63,7 @@ func TestBuffer_BlockOnFull(t *testing.T) {
 
 func TestBuffer_BlockOnFullAndThenEnqueue(t *testing.T) {
 	buffer := gobatcher.NewBuffer(1)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 
 	done := make(chan struct{})
 	wg := &sync.WaitGroup{}
@@ -76,7 +75,7 @@ func TestBuffer_BlockOnFullAndThenEnqueue(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		go func(ii int) {
-			op := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+			op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 			err := buffer.Enqueue(op, false)
 			assert.Nil(t, err, "expecting no error on enqueue")
 		}(i)
@@ -105,14 +104,14 @@ func TestBuffer_SizeIsCorrect(t *testing.T) {
 	var err error
 	buffer := gobatcher.NewBuffer(10)
 	assert.Equal(t, uint32(0), buffer.Size())
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 
-	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op1, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 	assert.Equal(t, uint32(1), buffer.Size())
 
-	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op2, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 	assert.Equal(t, uint32(2), buffer.Size())
@@ -132,13 +131,13 @@ func TestBuffer_Skip(t *testing.T) {
 	var err error
 	buffer := gobatcher.NewBuffer(10)
 	assert.Nil(t, buffer.Skip())
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 
-	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op1, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
-	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op2, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
@@ -152,13 +151,13 @@ func TestBuffer_Remove(t *testing.T) {
 	var err error
 	buffer := gobatcher.NewBuffer(10)
 	assert.Nil(t, buffer.Remove())
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 
-	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op1, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
-	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op2, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
@@ -173,17 +172,17 @@ func TestBuffer_Remove(t *testing.T) {
 func TestBuffer_RemoveFromMiddle(t *testing.T) {
 	var err error
 	buffer := gobatcher.NewBuffer(10)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 
-	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op1, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
-	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op2, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
-	op3 := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	op3 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op3, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 
@@ -204,8 +203,8 @@ func TestBuffer_TopIsEmpty(t *testing.T) {
 func TestBuffer_Clear(t *testing.T) {
 	var err error
 	buffer := gobatcher.NewBuffer(10)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
-	op := gobatcher.NewOperation(watcher, 0, struct{}{}, false).(*gobatcher.Operation)
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.Enqueue(op, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
 	buffer.Clear()

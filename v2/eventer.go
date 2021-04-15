@@ -17,6 +17,7 @@ type ieventer interface {
 	emit(event string, val int, msg string, metadata interface{})
 }
 
+// You can add a listener to catch events that are raised by Batcher or a rate limiter.
 func (r *eventer) AddListener(fn func(event string, val int, msg string, metadata interface{})) uuid.UUID {
 
 	// lock
@@ -35,6 +36,7 @@ func (r *eventer) AddListener(fn func(event string, val int, msg string, metadat
 	return id
 }
 
+// If you no longer need to catch events that are raised by Batcher or a rate limiter, you can use this method to remove the listener.
 func (r *eventer) RemoveListener(id uuid.UUID) {
 
 	// lock

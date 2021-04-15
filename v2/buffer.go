@@ -8,10 +8,10 @@ import (
 type Buffer interface {
 	Size() uint32
 	Max() uint32
-	Top() IOperation
-	Skip() IOperation
-	Remove() IOperation
-	Enqueue(IOperation, bool) error
+	Top() Operation
+	Skip() Operation
+	Remove() Operation
+	Enqueue(Operation, bool) error
 	Clear()
 }
 
@@ -27,7 +27,7 @@ type buffer struct {
 
 type links struct {
 	prv *links
-	op  IOperation
+	op  Operation
 	nxt *links
 }
 
@@ -59,7 +59,7 @@ func (b *buffer) Max() uint32 {
 
 // This sets the cursor position to the top of the Buffer and returns the head Operation. This method will return nil if there
 // is no head Operation. Batcher's main processing loop runs on a single thread so having a single cursor is appropriate.
-func (b *buffer) Top() IOperation {
+func (b *buffer) Top() Operation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	b.cursor = b.head
@@ -71,7 +71,7 @@ func (b *buffer) Top() IOperation {
 
 // This advances the cursor position leaving the current record in the Buffer. It returns the Operation at the new cursor
 // position. This method will return nil if there are no more Operations in the Buffer.
-func (b *buffer) Skip() IOperation {
+func (b *buffer) Skip() Operation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	if b.cursor == nil {
@@ -86,7 +86,7 @@ func (b *buffer) Skip() IOperation {
 
 // This advances the cursor position removing the current record from the Buffer. It returns the Operation at the new cursor
 // position. This method will return nil if there are no more Operations in the Buffer.
-func (b *buffer) Remove() IOperation {
+func (b *buffer) Remove() Operation {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
@@ -130,13 +130,13 @@ func (b *buffer) Remove() IOperation {
 
 // This allows you to add an Operation to the tail of the Buffer. If the Buffer is full and errorOnFull is false, this method
 // is blocking until the Operation can be added. If the Buffer is full and errorOnFull is true, this method returns BufferFullError.
-func (b *buffer) Enqueue(op IOperation, errorOnFull bool) error {
+func (b *buffer) Enqueue(op Operation, errorOnFull bool) error {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
 	for b.size >= b.max {
 		if errorOnFull {
-			return BufferFullError{}
+			return BufferFullError
 		}
 		b.notFull.Wait()
 	}
