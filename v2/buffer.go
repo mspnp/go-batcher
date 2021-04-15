@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-type IBuffer interface {
+type Buffer interface {
 	Size() uint32
 	Max() uint32
 	Top() IOperation
@@ -34,7 +34,7 @@ type links struct {
 // FOR INTERNAL USE ONLY. This method creates a new Buffer. The Buffer is a double-linked list holding the Operations that are
 // enqueued. All methods in the Buffer are threadsafe since they can be called from Batcher.Enqueue and the Batcher main processing
 // loop which are commonly in different goroutines.
-func NewBuffer(max uint32) IBuffer {
+func NewBuffer(max uint32) Buffer {
 	lock := &sync.Mutex{}
 	return &buffer{
 		lock:    lock,

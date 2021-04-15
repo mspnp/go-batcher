@@ -60,7 +60,7 @@ type Batcher struct {
 	maxConcurrentBatches uint32
 
 	// used for internal operations
-	buffer               IBuffer       // operations that are in the queue
+	buffer               Buffer        // operations that are in the queue
 	pause                chan struct{} // contains a record if batcher is paused
 	flush                chan struct{} // contains a record if batcher should flush
 	inflight             chan struct{} // tracks the number of inflight batches
