@@ -2,9 +2,11 @@
 
 This section documents ways to facilitate unit testing when using Batcher. [Testify](https://github.com/stretchr/testify) was used in the examples below, but it is not a requirement.
 
-- [Using events](#using-events)
 - [Using mocks](#using-mocks)
   - [AzureSharedResource](#azuresharedresource)
+  - [ProvisionedResource](#provisionedresource)
+  - [RateLimiter](#ratelimiter)
+- [Using events](#using-events)
 
 ## Using mocks
 
@@ -77,7 +79,7 @@ There are public interfaces provided for Batcher, Watcher, Operation, AzureShare
 
 ### AzureSharedResource
 
-One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account (specifically a mock blob and a mock container). This allows you to unit test without needing a real Azure Storage Account.
+One of the configuration options for AzureSharedResource is `WithMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account (specifically a mock blob and a mock container). This allows you to unit test without needing a real Azure Storage Account.
 
 1. Implement the mock interface for blob and container:
 
@@ -120,13 +122,15 @@ One of the configuration options for AzureSharedResource is `withMocks()`. For u
         blob := &mockBlob{}
         blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
             Return(nil, nil).Times(10)
-        res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).WithMocks(container, blob)
+        res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+            WithFactor(1000).
+            WithMocks(container, blob)
         var wg sync.WaitGroup
         wg.Add(1)
         res.AddListener(func(event string, val int, msg string, metadata interface{}) {
             switch event {
             case gobatcher.ErrorEvent:
-                assert.FailNow(t, "expecting no errors")
+                panic(errors.New(msg))
             case gobatcher.ProvisionDoneEvent:
                 wg.Done()
             }
@@ -139,9 +143,13 @@ One of the configuration options for AzureSharedResource is `withMocks()`. For u
     }
     ```
 
+### ProvisionedResource
+
+The ProvisionedResource does not need a `WithMocks()` method as it does not provision any resources in Azure. You can mock this interface as you would any other interface.
+
 ### RateLimiter
 
-The RateLimiter interface
+The RateLimiter interface allows you to create your own RateLimiters and use them with Batcher. However, this is outside of the scope of this unit test document.
 
 ## Using events
 
