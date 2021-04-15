@@ -14,7 +14,7 @@
 - [Usage](#usage)
   - [Batcher Configuration](#batcher-configuration)
   - [Events](#events)
-    - [Unit Testing](#unit-testing)
+  - [Unit Testing](#unit-testing)
 - [Rate limiting](#rate-limiting)
   - [Scenarios](#scenarios)
   - [Cost savings](#cost-savings)
