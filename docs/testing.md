@@ -77,7 +77,60 @@ There are public interfaces provided for Batcher, Watcher, Operation, AzureShare
 
 ### AzureSharedResource
 
-One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account and specifically a mock blob and a mock container.
+One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account (specifically a mock blockblob and a mock container). This allows you to unit test without needing a real Azure Storage Account.
+
+1. Implement the mock interface for blockblob and container:
+
+    ```go
+    type mockBlob struct {
+        mock.Mock
+    }
+
+    func (b *mockBlob) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap, clientKeyOpts azblob.ClientProvidedKeyOptions) (*azblob.BlockBlobUploadResponse, error) {
+        args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags, clientKeyOpts)
+        return nil, args.Error(1)
+    }
+
+    func (b *mockBlob) AcquireLease(ctx context.Context, proposedId string, duration int32, conditions azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error) {
+        args := b.Called(ctx, proposedId, duration, conditions)
+        return nil, args.Error(1)
+    }
+
+    type mockContainer struct {
+        mock.Mock
+    }
+
+    func (c *mockContainer) Create(ctx context.Context, metadata azblob.Metadata, publicAccessType azblob.PublicAccessType) (*azblob.ContainerCreateResponse, error) {
+        args := c.Called(ctx, metadata, publicAccessType)
+        return nil, args.Error(1)
+    }
+
+    func (c *mockContainer) NewBlockBlobURL(url string) azblob.BlockBlobURL {
+        _ = c.Called(url)
+        return azblob.BlockBlobURL{}
+    }
+    ```
+
+1.
+
+    ```go
+    func TestStuff(t *testing.T) {
+        container := &mockContainer{}
+        blob := &mockBlob{}
+        res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).WithMocks(container, blob)
+        var wg sync.WaitGroup
+        wg.Add(1)
+        res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+            switch event {
+            case gobatcher.ProvisionDoneEvent:
+                wg.Done()
+            }
+        })
+        err := res.Start(context.Background())
+        assert.NoError(t, err)
+        wg.Wait()
+    }
+    ```
 
 ### RateLimiter
 
@@ -116,8 +169,8 @@ Then consider the following unit test that validates that all operation costs we
 
 ```go
 func TestWriteString_CostIs100OrMore(t *testing.T) {
-    res := gobatcher.NewProvisionedResource(999)
-    // NOTE: The FlushInterval is 100ms so there will be 10 flushes per second with 99 capacity each, so operations that are 100 or more should be in their own batches
+    res := gobatcher.NewProvisionedResource(1000)
+    // NOTE: The FlushInterval is 100ms so there will be 10 flushes per second with 100 capacity each, so operations that are 100 or more should be in their own batches
     batcher := gobatcher.NewBatcher().
         WithRateLimiter(res).
         WithFlushInterval(100 * time.Millisecond).
