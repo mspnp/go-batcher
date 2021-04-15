@@ -2,9 +2,11 @@
 
 This section documents ways to facilitate unit testing when using Batcher. [Testify](https://github.com/stretchr/testify) was used in the examples below, but it is not a requirement.
 
-- [Using events](#using-events)
 - [Using mocks](#using-mocks)
   - [AzureSharedResource](#azuresharedresource)
+  - [ProvisionedResource](#provisionedresource)
+  - [RateLimiter](#ratelimiter)
+- [Using events](#using-events)
 
 ## Using mocks
 
@@ -77,11 +79,77 @@ There are public interfaces provided for Batcher, Watcher, Operation, AzureShare
 
 ### AzureSharedResource
 
-One of the configuration options for AzureSharedResource is `withMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account and specifically a mock blob and a mock container.
+One of the configuration options for AzureSharedResource is `WithMocks()`. For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account (specifically a mock blob and a mock container). This allows you to unit test without needing a real Azure Storage Account.
+
+1. Implement the mock interface for blob and container:
+
+    ```go
+    type mockBlob struct {
+        mock.Mock
+    }
+
+    func (b *mockBlob) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap, clientKeyOpts azblob.ClientProvidedKeyOptions) (*azblob.BlockBlobUploadResponse, error) {
+        args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags, clientKeyOpts)
+        return nil, args.Error(1)
+    }
+
+    func (b *mockBlob) AcquireLease(ctx context.Context, proposedId string, duration int32, conditions azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error) {
+        args := b.Called(ctx, proposedId, duration, conditions)
+        return nil, args.Error(1)
+    }
+
+    type mockContainer struct {
+        mock.Mock
+    }
+
+    func (c *mockContainer) Create(ctx context.Context, metadata azblob.Metadata, publicAccessType azblob.PublicAccessType) (*azblob.ContainerCreateResponse, error) {
+        args := c.Called(ctx, metadata, publicAccessType)
+        return nil, args.Error(1)
+    }
+
+    func (c *mockContainer) NewBlockBlobURL(url string) azblob.BlockBlobURL {
+        _ = c.Called(url)
+        return azblob.BlockBlobURL{}
+    }
+    ```
+
+1. Write a test method mocking any calls that are used in the underlying methods (for example, Start calls container.Create and blob.Upload):
+
+    ```go
+    func TestStart(t *testing.T) {
+        container := &mockContainer{}
+        container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
+        blob := &mockBlob{}
+        blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+            Return(nil, nil).Times(10)
+        res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+            WithFactor(1000).
+            WithMocks(container, blob)
+        var wg sync.WaitGroup
+        wg.Add(1)
+        res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+            switch event {
+            case gobatcher.ErrorEvent:
+                panic(errors.New(msg))
+            case gobatcher.ProvisionDoneEvent:
+                wg.Done()
+            }
+        })
+        err := res.Start(context.Background())
+        assert.NoError(t, err)
+        wg.Wait() // wait for provisioning (which is an async process) to finish
+        container.AssertExpectations(t)
+        blob.AssertExpectations(t)
+    }
+    ```
+
+### ProvisionedResource
+
+The ProvisionedResource does not need a `WithMocks()` method as it does not provision any resources in Azure. You can mock this interface as you would any other interface.
 
 ### RateLimiter
 
-This is provided so you can write your own.
+The RateLimiter interface allows you to create your own RateLimiters and use them with Batcher. However, this is outside of the scope of this unit test document.
 
 ## Using events
 
@@ -116,8 +184,8 @@ Then consider the following unit test that validates that all operation costs we
 
 ```go
 func TestWriteString_CostIs100OrMore(t *testing.T) {
-    res := gobatcher.NewProvisionedResource(999)
-    // NOTE: The FlushInterval is 100ms so there will be 10 flushes per second with 99 capacity each, so operations that are 100 or more should be in their own batches
+    res := gobatcher.NewProvisionedResource(1000)
+    // NOTE: The FlushInterval is 100ms so there will be 10 flushes per second with 100 capacity each, so operations that are 100 or more should be in their own batches
     batcher := gobatcher.NewBatcher().
         WithRateLimiter(res).
         WithFlushInterval(100 * time.Millisecond).
