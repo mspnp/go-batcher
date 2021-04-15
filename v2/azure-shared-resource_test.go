@@ -675,29 +675,31 @@ func TestAzureSRStop(t *testing.T) {
 
 }
 
-func TestRemoveListener(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("ensure nothing is raised after removing listener", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		var count uint32
-		id := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			atomic.AddUint32(&count, 1)
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		var start uint32
-		atomic.AddUint32(&start, atomic.LoadUint32(&count))
-		res.RemoveListener(id)
-		res.GiveMe(10000)
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
-		assert.Equal(t, atomic.LoadUint32(&start), atomic.LoadUint32(&count), "expecting no events after removing the listener")
+func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var wg sync.WaitGroup
+	var count uint32
+	id := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		atomic.AddUint32(&count, 1)
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
 	})
-
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	var start uint32
+	atomic.AddUint32(&start, atomic.LoadUint32(&count))
+	res.RemoveListener(id)
+	res.GiveMe(10000)
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
+	assert.Equal(t, atomic.LoadUint32(&start), atomic.LoadUint32(&count), "expecting no events after removing the listener")
 }
 
 func TestSetSharedCapacity(t *testing.T) {

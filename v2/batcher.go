@@ -538,8 +538,13 @@ func (r *batcher) Start() (err error) {
 
 				for {
 
+					// the buffer is empty or we are at the end
+					if op == nil {
+						break
+					}
+
 					// NOTE: by requiring consumed to be higher than capacity we ensure the process always dispatches at least 1 operation
-					if enforceCapacity && (capacity == 0 || consumed > capacity) {
+					if enforceCapacity && consumed >= capacity {
 						break
 					}
 
