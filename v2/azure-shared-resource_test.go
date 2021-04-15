@@ -85,15 +85,6 @@ func getMocks() (*containerURLMock, *blockBlobURLMock) {
 	return container, blob
 }
 
-func TestAzureSRStart_CanOnlyCreateViaNew(t *testing.T) {
-	res := gobatcher.AzureSharedResource{}
-	err := res.Start(context.Background())
-	if err != nil {
-		_ = err.Error() // improves code coverage
-	}
-	assert.Equal(t, gobatcher.UndefinedLeaseManagerError{}, err)
-}
-
 func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	container, blob := getMocks()
 	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10).
@@ -498,12 +489,10 @@ func TestAzureSRStart(t *testing.T) {
 			wg.Done()
 		}()
 		wg.Wait()
-		if e, ok := err1.(gobatcher.ImproperOrderError); ok && err2 == nil {
-			// valid response
-			_ = e.Error() // improves code coverage
-		} else if e, ok := err2.(gobatcher.ImproperOrderError); ok && err1 == nil {
-			// valid response
-			_ = e.Error() // improves code coverage
+		if err1 != nil {
+			assert.Equal(t, gobatcher.ImproperOrderError, err1)
+		} else if err2 != nil {
+			assert.Equal(t, gobatcher.ImproperOrderError, err2)
 		} else {
 			t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
 		}

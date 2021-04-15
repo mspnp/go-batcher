@@ -8,7 +8,7 @@ const (
 	rateLimiterPhaseStopped
 )
 
-type IRateLimiter interface {
+type RateLimiter interface {
 	MaxCapacity() uint32
 	Capacity() uint32
 	GiveMe(target uint32)
