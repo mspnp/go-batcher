@@ -15,7 +15,7 @@ func TestEnqueue(t *testing.T) {
 
 	t.Run("enqueue is allowed before startup", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		operation := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 		err := batcher.Enqueue(operation)
 		assert.NoError(t, err, "expect enqueue to be fine even if not started")
@@ -29,7 +29,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.NoOperationError{}, err, "expect a no-operation error")
+		assert.Equal(t, gobatcher.NoOperationError, err, "expect a no-operation error")
 	})
 
 	t.Run("operations require a watcher", func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.NoWatcherError{}, err, "expect a no-watcher error")
+		assert.Equal(t, gobatcher.NoWatcherError, err, "expect a no-watcher error")
 	})
 
 	t.Run("operations cannot exceed max capacity (provisioned)", func(t *testing.T) {
@@ -50,13 +50,13 @@ func TestEnqueue(t *testing.T) {
 			WithRateLimiter(res)
 		err := batcher.Start()
 		assert.NoError(t, err, "expecting no errors on startup")
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		operation := gobatcher.NewOperation(watcher, 2000, struct{}{}, false)
 		err = batcher.Enqueue(operation)
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.TooExpensiveError{}, err, "expect a too-expensive-error error")
+		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
 	})
 
 	t.Run("operations cannot exceed max capacity (shared)", func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestEnqueue(t *testing.T) {
 			WithRateLimiter(res)
 		err := batcher.Start()
 		assert.NoError(t, err, "expecting no errors on startup")
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		good := gobatcher.NewOperation(watcher, 11000, struct{}{}, false)
 		err = batcher.Enqueue(good)
 		assert.NoError(t, err)
@@ -75,7 +75,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.TooExpensiveError{}, err, "expect a too-expensive-error error")
+		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
 	})
 
 	t.Run("operations cannot be attempted more than x times", func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestEnqueue(t *testing.T) {
 		var mu sync.Mutex
 		attempts := 0
 		func() {
-			var op gobatcher.IOperation
+			var op gobatcher.Operation
 			enqueue := func() {
 				mu.Lock()
 				defer mu.Unlock()
@@ -96,14 +96,14 @@ func TestEnqueue(t *testing.T) {
 					if eerr != nil {
 						_ = eerr.Error() // improves code coverage
 					}
-					assert.Equal(t, gobatcher.TooManyAttemptsError{}, eerr, "expect the error to be too-many-attempts")
+					assert.Equal(t, gobatcher.TooManyAttemptsError, eerr, "expect the error to be too-many-attempts")
 					return
 				}
 				if attempts > 8 {
 					assert.FailNow(t, "the max-attempts governor didn't work, we have tried too many times")
 				}
 			}
-			watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+			watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 				enqueue()
 			}).WithMaxAttempts(3)
 			op = gobatcher.NewOperation(watcher, 100, struct{}{}, false)
@@ -125,7 +125,7 @@ func TestEnqueue(t *testing.T) {
 			var attempts uint32
 			func() {
 				count := 0
-				watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+				watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 					updateCountersMutex.Lock()
 					defer updateCountersMutex.Unlock()
 					for _, entry := range batch {
@@ -161,7 +161,7 @@ func TestEnqueue(t *testing.T) {
 
 	t.Run("enqueue will block caller if buffer full (default)", func(t *testing.T) {
 		batcher := gobatcher.NewBatcherWithBuffer(1)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		var err error
 		op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 		err = batcher.Enqueue(op1)
@@ -186,7 +186,7 @@ func TestEnqueue(t *testing.T) {
 	t.Run("enqueue will throw error if buffer is full (config)", func(t *testing.T) {
 		batcher := gobatcher.NewBatcherWithBuffer(1).
 			WithErrorOnFullBuffer()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		var err error
 		op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
 		err = batcher.Enqueue(op1)
@@ -196,7 +196,7 @@ func TestEnqueue(t *testing.T) {
 		if err != nil {
 			_ = err.Error() // improves code coverage
 		}
-		assert.Equal(t, gobatcher.BufferFullError{}, err, "expecting the buffer to be full")
+		assert.Equal(t, gobatcher.BufferFullError, err, "expecting the buffer to be full")
 	})
 
 }
@@ -205,7 +205,7 @@ func TestOperationsInBuffer(t *testing.T) {
 
 	t.Run("enqueuing operations increases num in buffer", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
 		err := batcher.Enqueue(op)
 		assert.NoError(t, err, "expecting no error on enqueue")
@@ -220,7 +220,7 @@ func TestOperationsInBuffer(t *testing.T) {
 			batcher := gobatcher.NewBatcher()
 			wg := sync.WaitGroup{}
 			wg.Add(4)
-			watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+			watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 				for i := 0; i < len(batch); i++ {
 					wg.Done()
 				}
@@ -246,7 +246,7 @@ func TestNeedsCapacity(t *testing.T) {
 
 	t.Run("cost updates the target", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
 		err := batcher.Enqueue(op)
 		assert.NoError(t, err, "expecting no error on enqueue")
@@ -261,7 +261,7 @@ func TestNeedsCapacity(t *testing.T) {
 			batcher := gobatcher.NewBatcher()
 			wg := sync.WaitGroup{}
 			wg.Add(4)
-			watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+			watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 				for i := 0; i < len(batch); i++ {
 					wg.Done()
 				}
@@ -299,7 +299,7 @@ func TestNeedsCapacity(t *testing.T) {
 				}
 			}
 		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			time.Sleep(400 * time.Millisecond)
 		})
 		var err error
@@ -336,7 +336,7 @@ func TestNeedsCapacity(t *testing.T) {
 				}
 			}
 		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			time.Sleep(400 * time.Millisecond)
 		})
 		var err error
@@ -490,7 +490,7 @@ func TestBatcherPause(t *testing.T) {
 				wg.Done()
 			}
 		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			assert.True(t, resumed, "all batches should be raised after resume")
 			wg.Done()
 		})
@@ -516,15 +516,6 @@ func TestBatcherPause(t *testing.T) {
 
 func TestBatcherStart(t *testing.T) {
 
-	t.Run("start without using new fails", func(t *testing.T) {
-		batcher := gobatcher.Batcher{}
-		err := batcher.Start()
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Error(t, gobatcher.BufferNotAllocated{}, err, "expecting the startup to fail since the buffer was never allocated")
-	})
-
 	t.Run("start is callable only once", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher()
 		var err1, err2 error
@@ -539,12 +530,10 @@ func TestBatcherStart(t *testing.T) {
 			wg.Done()
 		}()
 		wg.Wait()
-		if e, ok := err1.(gobatcher.BatcherImproperOrderError); ok && err2 == nil {
-			// valid response
-			_ = e.Error() // improves code coverage
-		} else if e, ok := err2.(gobatcher.BatcherImproperOrderError); ok && err1 == nil {
-			// valid response
-			_ = e.Error() // improves code coverage
+		if err1 != nil {
+			assert.Equal(t, gobatcher.ImproperOrderError, err1)
+		} else if err2 != nil {
+			assert.Equal(t, gobatcher.ImproperOrderError, err2)
 		} else {
 			t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
 		}
@@ -555,9 +544,9 @@ func TestBatcherStart(t *testing.T) {
 		var err error
 		wg := sync.WaitGroup{}
 		wg.Add(2)
-		var op1, op2, op3 gobatcher.IOperation
+		var op1, op2, op3 gobatcher.Operation
 		var count uint32 = 0
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			atomic.AddUint32(&count, uint32(len(batch)))
 			switch len(batch) {
 			case 1:
@@ -587,7 +576,7 @@ func TestBatcherStart(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond)
 		var count uint32 = 0
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			atomic.AddUint32(&count, 1)
 			assert.Equal(t, 3, len(batch), "expect batches to have 3 operations each")
 		}).WithMaxBatchSize(3)
@@ -699,7 +688,7 @@ func TestTimers(t *testing.T) {
 				WithRateLimiter(res).
 				WithFlushInterval(d.interval)
 			var count uint32 = 0
-			watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+			watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 				atomic.AddUint32(&count, uint32(len(batch)))
 			})
 			for i := 0; i < d.enqueue; i++ {
@@ -733,7 +722,7 @@ func TestTimers(t *testing.T) {
 					atomic.AddUint32(&count, 1)
 				}
 			})
-			watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+			watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 			op := gobatcher.NewOperation(watcher, 800, struct{}{}, false)
 			err := batcher.Enqueue(op)
 			assert.NoError(t, err, "not expecting an enqueue error")
@@ -747,7 +736,7 @@ func TestTimers(t *testing.T) {
 	t.Run("ensure long-running operations are still marked done (watcher)", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			// NOTE: simulate a long-running operation
 			time.Sleep(100 * time.Millisecond)
 		}).WithMaxOperationTime(10 * time.Millisecond)
@@ -767,7 +756,7 @@ func TestTimers(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond).
 			WithMaxOperationTime(10 * time.Millisecond)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			// NOTE: simulate a long-running operation
 			time.Sleep(100 * time.Millisecond)
 		})
@@ -786,7 +775,7 @@ func TestTimers(t *testing.T) {
 	t.Run("ensure abandoned operations are not marked done before 1m default", func(t *testing.T) {
 		batcher := gobatcher.NewBatcher().
 			WithFlushInterval(1 * time.Millisecond)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			// NOTE: simulate a long-running operation
 			time.Sleep(400 * time.Millisecond)
 		})
@@ -820,7 +809,7 @@ func TestAudit(t *testing.T) {
 				atomic.AddUint32(&failed, 1)
 			}
 		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {})
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
 		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
 		err := batcher.Enqueue(op)
 		assert.NoError(t, err, "not expecting an enqueue error")
@@ -844,7 +833,7 @@ func TestAudit(t *testing.T) {
 				atomic.AddUint32(&failed, 1)
 			}
 		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			time.Sleep(20 * time.Millisecond)
 		}).WithMaxOperationTime(1 * time.Minute)
 		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
@@ -867,7 +856,7 @@ func TestAudit(t *testing.T) {
 				atomic.AddUint32(&skipped, 1)
 			}
 		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			time.Sleep(20 * time.Millisecond)
 		})
 		var err error
@@ -888,7 +877,7 @@ func TestManualFlush(t *testing.T) {
 	err = batcher.Start()
 	assert.NoError(t, err, "not expecting a start error")
 	completed := make(chan bool, 1)
-	watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 		completed <- true
 	})
 	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
