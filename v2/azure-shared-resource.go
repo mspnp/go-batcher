@@ -12,14 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
-type IAzureSharedResource interface {
+type AzureSharedResource interface {
 	ieventer
 	RateLimiter
-	WithMocks(container IAzureContainer, blob IAzureBlob) IAzureSharedResource
-	WithMasterKey(val string) IAzureSharedResource
-	WithFactor(val uint32) IAzureSharedResource
-	WithReservedCapacity(val uint32) IAzureSharedResource
-	WithMaxInterval(val uint32) IAzureSharedResource
+	WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource
+	WithMasterKey(val string) AzureSharedResource
+	WithFactor(val uint32) AzureSharedResource
+	WithReservedCapacity(val uint32) AzureSharedResource
+	WithMaxInterval(val uint32) AzureSharedResource
 }
 
 type azureSharedResource struct {
@@ -55,7 +55,7 @@ type azureSharedResource struct {
 // resource. For example, if you provision a Cosmos database with 20k RU, you might set sharedCapacity to 20,000. Capacity is renewed
 // every 1 second. Commonly after calling NewAzureSharedResource() you will chain some WithXXXX methods, for instance...
 // `NewAzureSharedResource().WithMasterKey(key)`.
-func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) IAzureSharedResource {
+func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) AzureSharedResource {
 	res := &azureSharedResource{
 		sharedCapacity: sharedCapacity,
 	}
@@ -65,7 +65,7 @@ func NewAzureSharedResource(accountName, containerName string, sharedCapacity ui
 }
 
 // This allows you to provide mocked objects for container and blob for unit tests.
-func (r *azureSharedResource) WithMocks(container IAzureContainer, blob IAzureBlob) IAzureSharedResource {
+func (r *azureSharedResource) WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMocks(container, blob)
 	}
@@ -74,7 +74,7 @@ func (r *azureSharedResource) WithMocks(container IAzureContainer, blob IAzureBl
 
 // You must provide credentials for the AzureSharedResource to access the Azure Storage Account. Currently, the only supported method
 // is to provide a read/write key via WithMasterKey(). This method is required unless you calling WithMocks().
-func (r *azureSharedResource) WithMasterKey(val string) IAzureSharedResource {
+func (r *azureSharedResource) WithMasterKey(val string) AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMasterKey(val)
 	}
@@ -84,7 +84,7 @@ func (r *azureSharedResource) WithMasterKey(val string) IAzureSharedResource {
 // You may provide a factor that determines how much capacity each partition is worth. For instance, if you provision a Cosmos database
 // with 20k RU, you might use a factor of 1000, meaning 20 partitions would be created, each worth 1k RU. If not provided, the factor
 // defaults to `1`. There is a limit of 500 partitions, so if you have a shared capacity in excess of 500, you must provide a factor.
-func (r *azureSharedResource) WithFactor(val uint32) IAzureSharedResource {
+func (r *azureSharedResource) WithFactor(val uint32) AzureSharedResource {
 	r.factor = val
 	return r
 }
@@ -94,7 +94,7 @@ func (r *azureSharedResource) WithFactor(val uint32) IAzureSharedResource {
 // and 20,000 shared capacity. Any of the processes could obtain a maximum of 22,000 capacity. Capacity is renewed every 1 second.
 // Generally you use reserved capacity to reduce your latency - you no longer have to wait on a partition to be acquired in order to
 // process a small number of records.
-func (r *azureSharedResource) WithReservedCapacity(val uint32) IAzureSharedResource {
+func (r *azureSharedResource) WithReservedCapacity(val uint32) AzureSharedResource {
 	r.reservedCapacity = val
 	return r
 }
@@ -102,7 +102,7 @@ func (r *azureSharedResource) WithReservedCapacity(val uint32) IAzureSharedResou
 // The rate limiter will attempt to obtain an exclusive lease on a partition (when needed) every so often. The interval is random to
 // reduce the number of collisions and to provide an equal opportunity for processes to compete for partitions. This setting determines
 // the maximum amount of time between intervals. It defaults to `500` and is measured in milliseconds.
-func (r *azureSharedResource) WithMaxInterval(val uint32) IAzureSharedResource {
+func (r *azureSharedResource) WithMaxInterval(val uint32) AzureSharedResource {
 	r.maxInterval = val
 	return r
 }
