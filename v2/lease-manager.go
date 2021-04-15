@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-type iLeaseManager interface {
+type LeaseManager interface {
 	emit(event string, val int, msg string, metadata interface{})
 	provision(ctx context.Context) (err error)
 	createPartitions(ctx context.Context, count int) (err error)

@@ -2,9 +2,9 @@ package batcher
 
 import "context"
 
-type IProvisionedResource interface {
+type ProvisionedResource interface {
 	ieventer
-	IRateLimiter
+	RateLimiter
 }
 
 type provisionedResource struct {
@@ -14,7 +14,7 @@ type provisionedResource struct {
 
 // This function should be called to create a new NewProvisionedResource. A ProvisionedResource is a rate limiter that restricts
 // Operations based on the capacity specified. This is ReservedCapacity, not SharedCapacity (which this rate limiter does not address).
-func NewProvisionedResource(capacity uint32) IProvisionedResource {
+func NewProvisionedResource(capacity uint32) ProvisionedResource {
 	return &provisionedResource{
 		maxCapacity: capacity,
 	}

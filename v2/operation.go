@@ -2,11 +2,11 @@ package batcher
 
 import "sync/atomic"
 
-type IOperation interface {
+type Operation interface {
 	Payload() interface{}
 	Attempt() uint32
 	Cost() uint32
-	Watcher() IWatcher
+	Watcher() Watcher
 	IsBatchable() bool
 	MakeAttempt()
 }
@@ -15,13 +15,13 @@ type operation struct {
 	cost      uint32
 	attempt   uint32
 	batchable bool
-	watcher   IWatcher
+	watcher   Watcher
 	payload   interface{}
 }
 
 // This method creates a new Operation with a Watcher, cost, payload, and a flag determining whether or not the Operation is batchable.
 // An Operation will be Enqueued into a Batcher.
-func NewOperation(watcher IWatcher, cost uint32, payload interface{}, batchable bool) IOperation {
+func NewOperation(watcher Watcher, cost uint32, payload interface{}, batchable bool) Operation {
 	return &operation{
 		watcher:   watcher,
 		cost:      cost,
@@ -55,7 +55,7 @@ func (o *operation) Cost() uint32 {
 }
 
 // This is the Watcher associated with this Operation. Operations are batched by Watcher.
-func (o *operation) Watcher() IWatcher {
+func (o *operation) Watcher() Watcher {
 	return o.watcher
 }
 

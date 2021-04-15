@@ -12,17 +12,17 @@ const (
 	batcherPhaseStopped
 )
 
-type IBatcher interface {
+type Batcher interface {
 	ieventer
-	WithRateLimiter(rl IRateLimiter) IBatcher
-	WithFlushInterval(val time.Duration) IBatcher
-	WithCapacityInterval(val time.Duration) IBatcher
-	WithAuditInterval(val time.Duration) IBatcher
-	WithMaxOperationTime(val time.Duration) IBatcher
-	WithPauseTime(val time.Duration) IBatcher
-	WithErrorOnFullBuffer() IBatcher
-	WithEmitBatch() IBatcher
-	Enqueue(op IOperation) error
+	WithRateLimiter(rl RateLimiter) Batcher
+	WithFlushInterval(val time.Duration) Batcher
+	WithCapacityInterval(val time.Duration) Batcher
+	WithAuditInterval(val time.Duration) Batcher
+	WithMaxOperationTime(val time.Duration) Batcher
+	WithPauseTime(val time.Duration) Batcher
+	WithErrorOnFullBuffer() Batcher
+	WithEmitBatch() Batcher
+	Enqueue(op Operation) error
 	Pause()
 	Flush()
 	OperationsInBuffer() uint32
@@ -35,7 +35,7 @@ type batcher struct {
 	eventer
 
 	// configuration items that should not change after Start()
-	ratelimiter       IRateLimiter
+	ratelimiter       RateLimiter
 	flushInterval     time.Duration
 	capacityInterval  time.Duration
 	auditInterval     time.Duration
@@ -45,7 +45,7 @@ type batcher struct {
 	emitBatch         bool
 
 	// used for internal operations
-	buffer chan IOperation
+	buffer chan Operation
 	pause  chan bool
 	flush  chan bool
 
@@ -62,16 +62,16 @@ type batcher struct {
 
 // This method creates a new Batcher with a buffer that can contain up to 10,000 Operations. Generally you should have 1 Batcher per datastore.
 // Commonly after calling NewBatcher() you will chain some WithXXXX methods, for instance... `NewBatcher().WithRateLimiter(limiter)`.
-func NewBatcher() IBatcher {
+func NewBatcher() Batcher {
 	return NewBatcherWithBuffer(10000)
 }
 
 // This method creates a new Batcher with a buffer that can contain up to a user-defined number of Operations. Generally you should have 1
 // Batcher per datastore. Commonly after calling NewBatcherWithBuffer() you will chain some WithXXXX methods, for instance...
 // `NewBatcherWithBuffer().WithRateLimiter(limiter)`.
-func NewBatcherWithBuffer(maxBufferSize uint32) IBatcher {
+func NewBatcherWithBuffer(maxBufferSize uint32) Batcher {
 	r := &batcher{}
-	r.buffer = make(chan IOperation, maxBufferSize)
+	r.buffer = make(chan Operation, maxBufferSize)
 	r.pause = make(chan bool, 1)
 	r.flush = make(chan bool, 1)
 	return r
@@ -79,7 +79,7 @@ func NewBatcherWithBuffer(maxBufferSize uint32) IBatcher {
 
 // Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
 // optional; the default behavior does not rate limit.
-func (r *batcher) WithRateLimiter(rl IRateLimiter) IBatcher {
+func (r *batcher) WithRateLimiter(rl RateLimiter) Batcher {
 	r.ratelimiter = rl
 	return r
 }
@@ -88,7 +88,7 @@ func (r *batcher) WithRateLimiter(rl IRateLimiter) IBatcher {
 // is being used, the interval determines the capacity that each flush has to work with. For instance, with the default 100ms and 10,000
 // available capacity, there would be 10 flushes per second, each dispatching one or more batches of Operations that aim for 1,000 total
 // capacity. If no rate limiter is used, each flush will attempt to empty the buffer.
-func (r *batcher) WithFlushInterval(val time.Duration) IBatcher {
+func (r *batcher) WithFlushInterval(val time.Duration) Batcher {
 	r.flushInterval = val
 	return r
 }
@@ -97,7 +97,7 @@ func (r *batcher) WithFlushInterval(val time.Duration) IBatcher {
 // `100ms`. The Batcher asks for capacity equal to every Operation's cost that has not been marked done. In other words, when you Enqueue()
 // an Operation it increments a target based on cost. When you call done() on a batch (or the MaxOperationTime is exceeded), the target is
 // decremented by the cost of all Operations in the batch. If there is no rate limiter attached, this interval does nothing.
-func (r *batcher) WithCapacityInterval(val time.Duration) IBatcher {
+func (r *batcher) WithCapacityInterval(val time.Duration) Batcher {
 	r.capacityInterval = val
 	return r
 }
@@ -107,7 +107,7 @@ func (r *batcher) WithCapacityInterval(val time.Duration) IBatcher {
 // performed on the target and there are other failsafes such as MaxOperationTime, however, since it is critical that the target capacity
 // be correct, this is one final failsafe to ensure the Batcher isn't asking for the wrong capacity. Generally you should leave this set
 // at the default.
-func (r *batcher) WithAuditInterval(val time.Duration) IBatcher {
+func (r *batcher) WithAuditInterval(val time.Duration) Batcher {
 	r.auditInterval = val
 	return r
 }
@@ -115,7 +115,7 @@ func (r *batcher) WithAuditInterval(val time.Duration) IBatcher {
 // The MaxOperationTime determines how long Batcher waits until marking a batch done after releasing it to the Watcher. The default is `1m`.
 // You should always call the done() func when your batch has completed processing instead of relying on MaxOperationTime. The MaxOperationTime
 // on Batcher will be superceded by MaxOperationTime on Watcher if provided.
-func (r *batcher) WithMaxOperationTime(val time.Duration) IBatcher {
+func (r *batcher) WithMaxOperationTime(val time.Duration) Batcher {
 	r.maxOperationTime = val
 	return r
 }
@@ -123,20 +123,20 @@ func (r *batcher) WithMaxOperationTime(val time.Duration) IBatcher {
 // The PauseTime determines how long Batcher suspends the processing loop once Pause() is called. The default is `500ms`. Typically, Pause()
 // is called because errors are being received from the datastore such as TooManyRequests or Timeout. Pausing hopefully allows the datastore
 // to catch up without making the problem worse.
-func (r *batcher) WithPauseTime(val time.Duration) IBatcher {
+func (r *batcher) WithPauseTime(val time.Duration) Batcher {
 	r.pauseTime = val
 	return r
 }
 
 // Setting this option changes Enqueue() such that it throws an error if the buffer is full. Normal behavior is for the Enqueue() func to
 // block until it is able to add to the buffer.
-func (r *batcher) WithErrorOnFullBuffer() IBatcher {
+func (r *batcher) WithErrorOnFullBuffer() Batcher {
 	r.errorOnFullBuffer = true
 	return r
 }
 
 // DO NOT SET THIS IN PRODUCTION. For unit tests, it may be beneficial to raise an event for each batch of operations.
-func (r *batcher) WithEmitBatch() IBatcher {
+func (r *batcher) WithEmitBatch() Batcher {
 	r.emitBatch = true
 	return r
 }
@@ -160,7 +160,7 @@ func (r *batcher) applyDefaults() {
 }
 
 // Call this method to add an Operation into the buffer.
-func (r *batcher) Enqueue(op IOperation) error {
+func (r *batcher) Enqueue(op Operation) error {
 
 	// ensure an operation was provided
 	if op == nil {
@@ -317,7 +317,7 @@ func (r *batcher) Start() (err error) {
 
 	// define the func for flushing a batch
 	var lastFlushWithRecords time.Time
-	flush := func(watcher IWatcher, batch []IOperation) {
+	flush := func(watcher Watcher, batch []Operation) {
 		if len(batch) > 0 {
 			if r.emitBatch {
 				r.emit(BatchEvent, len(batch), "", batch)
@@ -424,7 +424,7 @@ func (r *batcher) Start() (err error) {
 				}
 
 				// if there are operations in the buffer, go up to the capacity
-				batches := make(map[IWatcher][]IOperation)
+				batches := make(map[Watcher][]Operation)
 				var consumed uint32 = 0
 			Fill:
 				for {
@@ -452,7 +452,7 @@ func (r *batcher) Start() (err error) {
 							}
 						} else {
 							consumed += op.Cost()
-							flush(watcher, []IOperation{op})
+							flush(watcher, []Operation{op})
 						}
 
 					default:

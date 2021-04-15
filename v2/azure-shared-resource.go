@@ -14,7 +14,7 @@ import (
 
 type IAzureSharedResource interface {
 	ieventer
-	IRateLimiter
+	RateLimiter
 	WithMocks(container IAzureContainer, blob IAzureBlob) IAzureSharedResource
 	WithMasterKey(val string) IAzureSharedResource
 	WithFactor(val uint32) IAzureSharedResource
@@ -32,7 +32,7 @@ type azureSharedResource struct {
 	reservedCapacity uint32
 
 	// used for internal operations
-	leaseManager iLeaseManager
+	leaseManager LeaseManager
 
 	// manage the phase
 	phaseMutex sync.Mutex
