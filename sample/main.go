@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	gobatcher "github.com/plasne/go-batcher"
+	gobatcher "github.com/plasne/go-batcher/v2"
 	goconfig "github.com/plasne/go-config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -148,7 +148,7 @@ func main() {
 		wg.Add(total)
 
 		// create a batch watcher
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			len := len(batch)
 			log.Info().Msgf("inserting a batch of %v records...", len)
 			optime := rand.Intn(1000)
