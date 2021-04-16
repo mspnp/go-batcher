@@ -156,10 +156,10 @@ The RateLimiter interface allows you to create your own RateLimiters and use the
 Both Batcher and RateLimiters raise events that you can interrogate in your unit tests to validate expected behaviors. Consider the following implementation:
 
 ```go
-func WriteString(batcher gobatcher.IBatcher, data []string) {
+func WriteString(batcher gobatcher.Batcher, data []string) {
     var wg sync.WaitGroup
     wg.Add(len(data))
-    watcher := gobatcher.NewWatcher(func(batch []gobatcher.IOperation) {
+    watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
         fmt.Println("START-OF-BATCH")
         for _, op := range batch {
             val := op.Payload().(string)
@@ -196,7 +196,7 @@ func TestWriteString_CostIs100OrMore(t *testing.T) {
         case gobatcher.BatchEvent:
             assert.Equal(t, 1, val)
             atomic.AddUint32(&batches, 1)
-            batch := metadata.([]gobatcher.IOperation)
+            batch := metadata.([]gobatcher.Operation)
             for _, op := range batch {
                 assert.GreaterOrEqual(t, op.Cost(), uint32(100))
             }
