@@ -19,7 +19,7 @@ const (
 type AzureSharedResource interface {
 	ieventer
 	RateLimiter
-	WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource
+	WithMocks(container azureContainer, blob azureBlob) AzureSharedResource
 	WithMasterKey(val string) AzureSharedResource
 	WithFactor(val uint32) AzureSharedResource
 	WithReservedCapacity(val uint32) AzureSharedResource
@@ -40,7 +40,7 @@ type azureSharedResource struct {
 	leaseTime        uint32
 
 	// used for internal operations
-	leaseManager LeaseManager
+	leaseManager leaseManager
 
 	// manage the phase
 	phaseMutex sync.Mutex
@@ -74,7 +74,7 @@ func NewAzureSharedResource(accountName, containerName string, sharedCapacity ui
 }
 
 // This allows you to provide mocked objects for container and blob for unit tests.
-func (r *azureSharedResource) WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource {
+func (r *azureSharedResource) WithMocks(container azureContainer, blob azureBlob) AzureSharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != batcherPhaseUninitialized {

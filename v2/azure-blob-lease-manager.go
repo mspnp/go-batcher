@@ -33,7 +33,7 @@ func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) withMocks(container AzureContainer, blob AzureBlob) *azureBlobLeaseManager {
+func (m *azureBlobLeaseManager) withMocks(container azureContainer, blob azureBlob) *azureBlobLeaseManager {
 	m.container = container
 	m.blob = blob
 	m.mocksInUse = true
@@ -95,7 +95,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 	return
 }
 
-func (m *azureBlobLeaseManager) getBlob(index int) AzureBlob {
+func (m *azureBlobLeaseManager) getBlob(index int) azureBlob {
 	if m.blob != nil {
 		return m.blob
 	} else {
