@@ -12,6 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	maxPartitions = 500
+)
+
 type AzureSharedResource interface {
 	ieventer
 	RateLimiter
@@ -154,7 +158,7 @@ func (r *azureSharedResource) WithLeaseTime(val uint32) AzureSharedResource {
 // the limit of 500 partitions.
 func (r *azureSharedResource) MaxCapacity() uint32 {
 	sharedCapacity := atomic.LoadUint32(&r.sharedCapacity)
-	max := r.factor * 500
+	max := r.factor * maxPartitions
 	if sharedCapacity > max {
 		sharedCapacity = max
 	}
@@ -302,9 +306,9 @@ func (r *azureSharedResource) provisionBlobs(ctx context.Context) {
 	// make 1 partition per factor
 	sharedCapacity := atomic.LoadUint32(&r.sharedCapacity)
 	count := int(math.Ceil(float64(sharedCapacity) / float64(r.factor)))
-	if count > 500 {
+	if count > maxPartitions {
 		r.emit(ErrorEvent, count, "only 500 partitions were created as this is the max supported", nil)
-		count = 500
+		count = maxPartitions
 	}
 
 	// copy into a new partition list
