@@ -89,6 +89,11 @@ func NewBatcherWithBuffer(maxBufferSize uint32) Batcher {
 // Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
 // optional; the default behavior does not rate limit.
 func (r *batcher) WithRateLimiter(rl RateLimiter) Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.ratelimiter = rl
 	return r
 }
@@ -98,6 +103,11 @@ func (r *batcher) WithRateLimiter(rl RateLimiter) Batcher {
 // available capacity, there would be 10 flushes per second, each dispatching one or more batches of Operations that aim for 1,000 total
 // capacity. If no rate limiter is used, each flush will attempt to empty the buffer.
 func (r *batcher) WithFlushInterval(val time.Duration) Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.flushInterval = val
 	return r
 }
@@ -107,6 +117,11 @@ func (r *batcher) WithFlushInterval(val time.Duration) Batcher {
 // an Operation it increments a target based on cost. When you call done() on a batch (or the MaxOperationTime is exceeded), the target is
 // decremented by the cost of all Operations in the batch. If there is no rate limiter attached, this interval does nothing.
 func (r *batcher) WithCapacityInterval(val time.Duration) Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.capacityInterval = val
 	return r
 }
@@ -117,6 +132,11 @@ func (r *batcher) WithCapacityInterval(val time.Duration) Batcher {
 // be correct, this is one final failsafe to ensure the Batcher isn't asking for the wrong capacity. Generally you should leave this set
 // at the default.
 func (r *batcher) WithAuditInterval(val time.Duration) Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.auditInterval = val
 	return r
 }
@@ -125,6 +145,11 @@ func (r *batcher) WithAuditInterval(val time.Duration) Batcher {
 // You should always call the done() func when your batch has completed processing instead of relying on MaxOperationTime. The MaxOperationTime
 // on Batcher will be superceded by MaxOperationTime on Watcher if provided.
 func (r *batcher) WithMaxOperationTime(val time.Duration) Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.maxOperationTime = val
 	return r
 }
@@ -133,6 +158,11 @@ func (r *batcher) WithMaxOperationTime(val time.Duration) Batcher {
 // is called because errors are being received from the datastore such as TooManyRequests or Timeout. Pausing hopefully allows the datastore
 // to catch up without making the problem worse.
 func (r *batcher) WithPauseTime(val time.Duration) Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.pauseTime = val
 	return r
 }
@@ -140,12 +170,22 @@ func (r *batcher) WithPauseTime(val time.Duration) Batcher {
 // Setting this option changes Enqueue() such that it throws an error if the buffer is full. Normal behavior is for the Enqueue() func to
 // block until it is able to add to the buffer.
 func (r *batcher) WithErrorOnFullBuffer() Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.errorOnFullBuffer = true
 	return r
 }
 
 // DO NOT SET THIS IN PRODUCTION. For unit tests, it may be beneficial to raise an event for each batch of operations.
 func (r *batcher) WithEmitBatch() Batcher {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
 	r.emitBatch = true
 	return r
 }
@@ -498,13 +538,13 @@ func (r *batcher) Start() (err error) {
 
 				for {
 
-					// NOTE: by requiring consumed to be higher than capacity we ensure the process always dispatches at least 1 operation
-					if enforceCapacity && consumed > capacity {
+					// the buffer is empty or we are at the end
+					if op == nil {
 						break
 					}
 
-					// the buffer is empty or we are at the end
-					if op == nil {
+					// enforce capacity
+					if enforceCapacity && consumed >= capacity {
 						break
 					}
 

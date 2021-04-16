@@ -1,7 +1,5 @@
 package main
 
-// NOTE: please review this as a sample of using batcher
-
 import (
 	"context"
 	"errors"
@@ -51,7 +49,7 @@ func init() {
 
 	// allow for flags to override env
 	flag.IntVar(&flagPort, "port", 0, "Determines the port to listen for HTTP requests. This overrides PORT.")
-	flag.IntVar(&flagCapacity, "capacity", 0, "Determines the capacity to shared. This overrides CAPACITY.")
+	flag.IntVar(&flagCapacity, "capacity", -1, "Determines the capacity to shared. This overrides CAPACITY.")
 
 	// seed the random number generator
 	rand.Seed(time.Now().UnixNano())
@@ -64,7 +62,7 @@ func main() {
 	// complete configuration
 	flag.Parse()
 	PORT := goconfig.AsInt().TrySetValue(flagPort).TrySetByEnv("PORT").DefaultTo(8080).Print().Value()
-	CAPACITY := goconfig.AsInt().TrySetValue(flagCapacity).TrySetByEnv("CAPACITY").DefaultTo(10000).Print().Value()
+	CAPACITY := goconfig.AsInt().SetEmpty(-1).TrySetValue(flagCapacity).TrySetByEnv("CAPACITY").DefaultTo(10000).Print().Value()
 	AZBLOB_ACCOUNT := goconfig.AsString().TrySetByEnv("AZBLOB_ACCOUNT").Print().Require().Value()
 	AZBLOB_KEY := goconfig.AsString().TrySetByEnv("AZBLOB_KEY").PrintMasked().Require().Value()
 	AZBLOB_CONTAINER := goconfig.AsString().TrySetByEnv("AZBLOB_CONTAINER").Print().Require().Value()
@@ -98,9 +96,6 @@ func main() {
 		}
 	})
 	defer azresource.RemoveListener(resourceListener)
-	if err := azresource.Provision(ctx); err != nil {
-		panic(err)
-	}
 	if err := azresource.Start(ctx); err != nil {
 		panic(err)
 	}
@@ -136,6 +131,26 @@ func main() {
 		panic(err)
 	}
 
+	var capacityOffset uint32
+
+	http.HandleFunc("/inc", func(res http.ResponseWriter, req *http.Request) {
+		capacityOffset += 1000
+		capacity := capacityOffset + uint32(CAPACITY)
+		azresource.SetSharedCapacity(capacity)
+		log.Debug().Msgf("increased shared capacity by 1000 to %v.", capacity)
+	})
+
+	http.HandleFunc("/dec", func(res http.ResponseWriter, req *http.Request) {
+		if capacityOffset+uint32(CAPACITY) >= 1000 {
+			capacityOffset -= 1000
+			capacity := capacityOffset + uint32(CAPACITY)
+			azresource.SetSharedCapacity(capacity)
+			log.Debug().Msgf("decreased shared capacity by 1000 to %v.", capacity)
+		} else {
+			log.Debug().Msgf("shared capacity cannot go below 0.")
+		}
+	})
+
 	// handle the ingest
 	http.HandleFunc("/ingest", func(res http.ResponseWriter, req *http.Request) {
 		log.Debug().Msgf("started ingest request...")
@@ -168,7 +183,9 @@ func main() {
 			payload := struct{}{}
 			op := gobatcher.NewOperation(watcher, 10, payload, true)
 			if errorOnEnqueue := batcher.Enqueue(op); errorOnEnqueue != nil {
-				panic(errorOnEnqueue)
+				res.WriteHeader(http.StatusInternalServerError)
+				_, _ = res.Write([]byte(errorOnEnqueue.Error()))
+				return
 			}
 		}
 		log.Debug().Msgf("generated %v records.", total)

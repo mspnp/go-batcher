@@ -280,6 +280,10 @@ Using default settings, each instance of AzureSharedResource will make a single 
 
 However, this is a maximum cost - actual costs in many cases will be much lower as there are only storage operations when additional capacity is needed.
 
+### Changing Capacity
+
+Both rate limiters support changing capacity after Start(). For ProvisionedResource, you can call `SetCapacity(newcap)`. For AzureSharedResource, you can call `SetSharedCapacity(newcap)` and `SetReservedCapacity(newcap)`. If you change SharedCapacity, to a higher value than previously seen, realize it will need to provision blobs (per SharedCapacity divided by Factor) before it can return to its normal cycle of procuring partitions for capacity.
+
 ## Determining Cost
 
 A Batcher with a rate limiter depends on each operation having a cost. The following documents provide you with assistance on determining what values you should use for cost.
@@ -291,8 +295,6 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 ## Opportunities for improvement
 
 - This tool was originally designed to limit transactions against Azure Cosmos which has a cost model expressed as a single composite value (Request Unit). For datastores that might have more granular capacities, it would be nice to be able to provision Batcher with all those capacities and have an enqueue method that supports those costs. For example, memory, CPU, disk, network, etc. might all have separate capacities and individual queries might have individual costs.
-
-- There is currently no way to change capacity in the rate limiters once they are provisioned, but there is no identified use-case yet for this feature.
 
 - There is currently not a good way to model a datastore that autoscales but might require some time to increase capacity. Ideally something that allowed for capacity to increase by "no more than x amount over y time" would be helpful. This could be a rate limiter or a feature that is added to existing rate limiters.
 

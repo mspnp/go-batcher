@@ -1,10 +1,14 @@
 package batcher
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 type ProvisionedResource interface {
 	ieventer
 	RateLimiter
+	SetCapacity(capacity uint32)
 }
 
 type provisionedResource struct {
@@ -20,20 +24,21 @@ func NewProvisionedResource(capacity uint32) ProvisionedResource {
 	}
 }
 
-// DEPRECATED
-func (r *provisionedResource) Provision(ctx context.Context) error {
-	return nil
-}
-
 // This returns the maximum capacity that could ever be obtained by the rate limiter. It is the capacity number provided when
 // NewProvisionedResource() is called.
 func (r *provisionedResource) MaxCapacity() uint32 {
-	return r.maxCapacity
+	return atomic.LoadUint32(&r.maxCapacity)
 }
 
 // This returns the current allocated capacity. It is the capacity number provided when NewProvisionedResource() is called.
 func (r *provisionedResource) Capacity() uint32 {
-	return r.maxCapacity
+	return atomic.LoadUint32(&r.maxCapacity)
+}
+
+// This allows you to set the ReservedCapacity to a different value after the RateLimiter has started.
+func (r *provisionedResource) SetCapacity(capacity uint32) {
+	atomic.StoreUint32(&r.maxCapacity, capacity)
+	r.emit(CapacityEvent, int(capacity), "", nil)
 }
 
 // You should call GiveMe() to update the capacity you are requesting. You will always specify the new amount of capacity you require.

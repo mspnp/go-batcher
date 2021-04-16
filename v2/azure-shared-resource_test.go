@@ -85,181 +85,176 @@ func getMocks() (*containerURLMock, *blockBlobURLMock) {
 	return container, blob
 }
 
-func TestProvision(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("shared-capacity is required", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 0).
-			WithMocks(getMocks())
-		err := res.Provision(ctx)
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Equal(t, gobatcher.UndefinedSharedCapacityError, err)
-	})
-
-	t.Run("provision is callable only once", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000)
-		var err1, err2 error
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			err1 = res.Provision(ctx)
+func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
+	container, blob := getMocks()
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10).
+		WithMocks(container, blob)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			assert.Equal(t, 10, val)
 			wg.Done()
-		}()
-		go func() {
-			err2 = res.Provision(ctx)
+		}
+	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	blob.AssertNumberOfCalls(t, "Upload", 10)
+}
+
+func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ErrorEvent:
+			assert.Equal(t, 10000, val)
 			wg.Done()
-		}()
-		wg.Wait()
-		if err1 != nil {
-			assert.Equal(t, gobatcher.ImproperOrderError, err1)
-		} else if err2 != nil {
-			assert.Equal(t, gobatcher.ImproperOrderError, err2)
-		} else {
-			t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
 		}
 	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+}
 
-	t.Run("factor defaults to 1", func(t *testing.T) {
-		container, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10).
-			WithMocks(container, blob)
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		blob.AssertNumberOfCalls(t, "Upload", 10)
-	})
+func TestAzureSRStart_CreateContainerOnce(t *testing.T) {
+	container, blob := getMocks()
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(container, blob).
+		WithFactor(1000)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	container.AssertNumberOfCalls(t, "Create", 1)
+}
 
-	t.Run("partitions limit is enforced", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks())
-		err := res.Provision(ctx)
-		if err != nil {
-			_ = err.Error() // improves code coverage
+func TestAzureSRStart_CorrectNumberOfPartitionsCreated(t *testing.T) {
+	container, blob := getMocks()
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(container, blob).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			assert.Equal(t, 10, val)
+			wg.Done()
 		}
-		assert.Equal(t, gobatcher.PartitionsOutOfRangeError{
-			MaxCapacity:    uint32(10000),
-			Factor:         uint32(1),
-			PartitionCount: 10000,
-		}, err, "expecting an error, but max-capacity should be configured, factor should default to 1, and partition-count should be derived")
 	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	blob.AssertNumberOfCalls(t, "Upload", 10)
+}
 
-	t.Run("create container is called once when provisioning resource", func(t *testing.T) {
-		container, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		container.AssertNumberOfCalls(t, "Create", 1)
+func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
+	container, blob := getMocks()
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10050).
+		WithMocks(container, blob).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			assert.Equal(t, 11, val)
+			wg.Done()
+		}
 	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	blob.AssertNumberOfCalls(t, "Upload", 11)
+}
 
-	t.Run("correct number of partitions are created", func(t *testing.T) {
-		container, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		blob.AssertNumberOfCalls(t, "Upload", 10)
+func TestAzureSRStart_ContainerCanBeCreated(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+	var created int
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case "created-container":
+			created += 1
+		}
 	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	assert.Equal(t, 1, created, "expecting a single created event")
+}
 
-	t.Run("partial partitions round up", func(t *testing.T) {
-		container, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10050).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		blob.AssertNumberOfCalls(t, "Upload", 11)
+func TestAzureSRStart_ContainerCanBeVerified(t *testing.T) {
+	var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeContainerAlreadyExists}
+	container := new(containerURLMock)
+	container.On("Create", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, serr)
+	_, blob := getMocks()
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(container, blob).
+		WithFactor(1000)
+	var verified int
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case "verified-container":
+			verified += 1
+		}
 	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	assert.Equal(t, 1, verified, "expecting a single verified event")
+}
 
-	t.Run("container can be created", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000)
-		var created int
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case "created-container":
-				created += 1
-			}
-		})
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		assert.Equal(t, 1, created, "expecting a single created event")
-	})
-
-	t.Run("container can be verified", func(t *testing.T) {
-		var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeContainerAlreadyExists}
-		container := new(containerURLMock)
-		container.On("Create", mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, serr)
-		_, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		var verified int
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case "verified-container":
-				verified += 1
-			}
-		})
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		assert.Equal(t, 1, verified, "expecting a single verified event")
-	})
-
-	t.Run("unknown container error cascades", func(t *testing.T) {
-		unknown := fmt.Errorf("unknown mocked error")
-		container := new(containerURLMock)
-		container.On("Create", mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, unknown)
-		_, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.Equal(t, unknown, err, "expecting the error to be thrown back from provision")
-	})
-
-	t.Run("unrelated container storage error cascades", func(t *testing.T) {
-		var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeAppendPositionConditionNotMet}
-		container := new(containerURLMock)
-		container.On("Create", mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, serr)
-		_, blob := getMocks()
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.Equal(t, serr, err, "expecting the error to be thrown back from provision")
-	})
-
-	t.Run("blob can be created", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000)
-		var created int
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case "created-blob":
-				created += 1
-			}
-		})
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		assert.Equal(t, 10, created, "expecting a creation event per partition")
-	})
-
-	blobErrors := map[string]azblob.StorageError{
-		"blob can be verified because it exists":    StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists},
-		"blob can be verified because it is leased": StorageError{serviceCode: azblob.ServiceCodeLeaseIDMissing},
+func TestAzureSRStart_ContainerErrorsCascade(t *testing.T) {
+	testCases := map[string]error{
+		"unknown error": fmt.Errorf("unknown mocked error"),
+		"storage error": StorageError{serviceCode: azblob.ServiceCodeAppendPositionConditionNotMet},
 	}
-	for testName, serr := range blobErrors {
+	for testName, serr := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			container := new(containerURLMock)
+			container.On("Create", mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, serr)
+			_, blob := getMocks()
+			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+				WithMocks(container, blob).
+				WithFactor(1000)
+			err := res.Start(context.Background())
+			assert.Equal(t, serr, err, "expecting the error to be thrown back from start")
+		})
+	}
+}
+
+func TestAzureSRStart_BlobCanBeCreated(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var created int
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CreatedBlobEvent:
+			created += 1
+		case gobatcher.ProvisionDoneEvent:
+			wg.Done()
+		}
+	})
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, 10, created, "expecting a creation event per partition")
+}
+
+func TestAzureSRStart_BlobCanBeVerified(t *testing.T) {
+	testCases := map[string]azblob.StorageError{
+		"exists": StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists},
+		"leased": StorageError{serviceCode: azblob.ServiceCodeLeaseIDMissing},
+	}
+	for testName, serr := range testCases {
 		t.Run(testName, func(t *testing.T) {
 			container, _ := getMocks()
 			blob := new(blockBlobURLMock)
@@ -268,57 +263,71 @@ func TestProvision(t *testing.T) {
 			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
 				WithMocks(container, blob).
 				WithFactor(1000)
+			var wg sync.WaitGroup
+			wg.Add(1)
 			var verified int
 			res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 				switch event {
-				case "verified-blob":
+				case gobatcher.VerifiedBlobEvent:
 					verified += 1
+				case gobatcher.ProvisionDoneEvent:
+					wg.Done()
 				}
 			})
-			err := res.Provision(ctx)
-			assert.NoError(t, err, "not expecting a provision error")
+			err := res.Start(context.Background())
+			assert.NoError(t, err, "not expecting a start error")
+			wg.Wait()
 			assert.Equal(t, 10, verified, "expecting a verified event per partition")
 		})
 	}
-
-	t.Run("unknown blob error cascades", func(t *testing.T) {
-		unknown := fmt.Errorf("unknown mocked error")
-		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, unknown)
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.Equal(t, unknown, err, "expecting the error to be thrown back from provision")
-	})
-
-	t.Run("unrelated blob storage error cascades", func(t *testing.T) {
-		serr := StorageError{serviceCode: azblob.ServiceCodeBlobArchived}
-		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, serr)
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.Equal(t, serr, err, "expecting the error to be thrown back from provision")
-	})
-
 }
 
-func TestMaxCapacity(t *testing.T) {
+func TestAzureSRStart_BlobErrorsCascade(t *testing.T) {
+	testCases := map[string]error{
+		"unknown error": fmt.Errorf("unknown mocked error"),
+		"storage error": StorageError{serviceCode: azblob.ServiceCodeBlobArchived},
+	}
+	for testName, serr := range testCases {
+		t.Run(testName, func(t *testing.T) {
+			container, _ := getMocks()
+			blob := new(blockBlobURLMock)
+			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, serr)
+			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+				WithMocks(container, blob).
+				WithFactor(1000)
+			var wg sync.WaitGroup
+			wg.Add(1)
+			res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+				switch event {
+				case gobatcher.ErrorEvent:
+					assert.Equal(t, serr, metadata)
+					wg.Done()
+				}
+			})
+			err := res.Start(context.Background())
+			assert.NoError(t, err, "not expecting a start error")
+			wg.Wait()
+		})
+	}
+}
 
-	t.Run("max-capacity is shared-capacity plus reserved-capacity", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithReservedCapacity(2000)
-		max := res.MaxCapacity()
-		assert.Equal(t, uint32(12000), max)
-	})
+func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithReservedCapacity(2000).
+		WithFactor(1000)
+	max := res.MaxCapacity()
+	assert.Equal(t, uint32(12000), max)
+}
 
+func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithReservedCapacity(2000).
+		WithFactor(1)
+	max := res.MaxCapacity()
+	assert.Equal(t, uint32(2500), max)
 }
 
 func TestCapacity(t *testing.T) {
@@ -338,10 +347,7 @@ func TestCapacity(t *testing.T) {
 			WithReservedCapacity(2000).
 			WithFactor(1000).
 			WithMaxInterval(1)
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(2500)
 		time.Sleep(1 * time.Second)
@@ -359,10 +365,7 @@ func TestGiveMe(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000).
 			WithMaxInterval(1)
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(4000)
 		time.Sleep(1 * time.Second)
@@ -383,10 +386,7 @@ func TestGiveMe(t *testing.T) {
 				atomic.AddUint32(&allocated, 1)
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(4000)
 		time.Sleep(1 * time.Second)
@@ -408,10 +408,7 @@ func TestGiveMe(t *testing.T) {
 				allocated += 1
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(2000)
 		time.Sleep(1 * time.Second)
@@ -433,10 +430,7 @@ func TestGiveMe(t *testing.T) {
 				allocated += 1
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(1800)
 		time.Sleep(1 * time.Second)
@@ -457,10 +451,7 @@ func TestGiveMe(t *testing.T) {
 				atomic.AddUint32(&allocated, 1)
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(1800)
 		time.Sleep(1 * time.Second)
@@ -475,10 +466,7 @@ func TestGiveMe(t *testing.T) {
 			WithFactor(1000).
 			WithReservedCapacity(2000).
 			WithMaxInterval(1)
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(200000)
 		time.Sleep(1 * time.Second)
@@ -491,19 +479,10 @@ func TestGiveMe(t *testing.T) {
 func TestAzureSRStart(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("start must be called after provision", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks())
-		err := res.Start(ctx)
-		assert.Equal(t, gobatcher.ImproperOrderError, err)
-	})
-
 	t.Run("start is callable only once", func(t *testing.T) {
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
 			WithMocks(getMocks()).
 			WithFactor(1000)
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
 		var err1, err2 error
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -538,10 +517,7 @@ func TestAzureSRStart(t *testing.T) {
 				atomic.AddUint32(&value, uint32(val))
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		time.Sleep(100 * time.Millisecond)
 		assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting 1 capacity event")
@@ -561,10 +537,7 @@ func TestAzureSRStart(t *testing.T) {
 				atomic.AddUint32(&released, 1)
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(1800)
 		time.Sleep(2 * time.Second)
@@ -609,10 +582,7 @@ func TestAzureSRStart(t *testing.T) {
 				atomic.AddUint32(&errored, 1)
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(500)
 		time.Sleep(10 * time.Millisecond)
@@ -626,10 +596,7 @@ func TestAzureSRStart(t *testing.T) {
 			WithMocks(getMocks()).
 			WithFactor(1000).
 			WithMaxInterval(1)
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.GiveMe(80000)
 		time.Sleep(100 * time.Millisecond)
@@ -654,10 +621,7 @@ func TestAzureSRStop(t *testing.T) {
 				close(done)
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		res.Stop()
 		select {
@@ -681,8 +645,6 @@ func TestAzureSRStop(t *testing.T) {
 				close(done)
 			}
 		})
-		err := res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
 		res.Stop()
 		select {
 		case <-done:
@@ -705,10 +667,7 @@ func TestAzureSRStop(t *testing.T) {
 				atomic.AddUint32(&count, 1)
 			}
 		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
+		err := res.Start(ctx)
 		assert.NoError(t, err, "not expecting a start error")
 		go func() {
 			res.Stop()
@@ -722,30 +681,207 @@ func TestAzureSRStop(t *testing.T) {
 
 }
 
-func TestRemoveListener(t *testing.T) {
-	ctx := context.Background()
+func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var wg sync.WaitGroup
+	var count uint32
+	id := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		atomic.AddUint32(&count, 1)
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	var start uint32
+	atomic.AddUint32(&start, atomic.LoadUint32(&count))
+	res.RemoveListener(id)
+	res.GiveMe(10000)
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
+	assert.Equal(t, atomic.LoadUint32(&start), atomic.LoadUint32(&count), "expecting no events after removing the listener")
+}
 
-	t.Run("ensure nothing is raised after removing listener", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		var count uint32
-		id := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			atomic.AddUint32(&count, 1)
-		})
-		var err error
-		err = res.Provision(ctx)
-		assert.NoError(t, err, "not expecting a provision error")
-		err = res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		var start uint32
-		atomic.AddUint32(&start, atomic.LoadUint32(&count))
-		res.RemoveListener(id)
-		res.GiveMe(10000)
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
-		assert.Equal(t, atomic.LoadUint32(&start), atomic.LoadUint32(&count), "expecting no events after removing the listener")
+func TestSetSharedCapacity(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	var start, done uint32
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionStartEvent:
+			atomic.AddUint32(&start, 1)
+			wg.Done()
+		case gobatcher.ProvisionDoneEvent:
+			atomic.AddUint32(&done, 1)
+			wg.Done()
+		}
 	})
 
+	wg.Add(2)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(1), start)
+	assert.Equal(t, uint32(1), done)
+	assert.Equal(t, uint32(10000), res.MaxCapacity())
+
+	atomic.StoreUint32(&start, 0)
+	atomic.StoreUint32(&done, 0)
+
+	wg.Add(2)
+	res.SetSharedCapacity(20000)
+	wg.Wait()
+	assert.Equal(t, uint32(1), start)
+	assert.Equal(t, uint32(1), done)
+	assert.Equal(t, uint32(20000), res.MaxCapacity())
+}
+
+func TestSetReservedCapacity(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(10000), res.MaxCapacity())
+	assert.Equal(t, uint32(0), res.Capacity())
+
+	wg.Add(1)
+	res.SetReservedCapacity(2000)
+	wg.Wait()
+	assert.Equal(t, uint32(12000), res.MaxCapacity())
+	assert.Equal(t, uint32(2000), res.Capacity())
+}
+
+func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var provisionWg, capacityWg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			provisionWg.Done()
+		case gobatcher.CapacityEvent:
+			capacityWg.Done()
+		}
+	})
+
+	provisionWg.Add(1)
+	capacityWg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	provisionWg.Wait()
+	capacityWg.Wait()
+
+	capacityWg.Add(5)
+	res.GiveMe(5000)
+	capacityWg.Wait()
+	assert.Equal(t, uint32(5000), res.Capacity())
+
+	provisionWg.Add(1)
+	capacityWg.Add(1)
+	res.SetSharedCapacity(12000)
+	provisionWg.Wait()
+	capacityWg.Wait()
+	assert.Equal(t, uint32(5000), res.Capacity())
+}
+
+func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1).
+		WithLeaseTime(1)
+	var wg sync.WaitGroup
+
+	provisionListener := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	res.RemoveListener(provisionListener)
+
+	capacityListener := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(5)
+	res.GiveMe(5000)
+	wg.Wait()
+	assert.Equal(t, uint32(5000), res.Capacity())
+	res.RemoveListener(capacityListener)
+
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ReleasedEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(5)
+	res.SetSharedCapacity(0)
+	wg.Wait()
+}
+
+func TestStartingWithZeroSharedCapacity(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 0).
+		WithMocks(getMocks()).
+		WithFactor(1000)
+
+	var expectedCapacity int
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			assert.Equal(t, expectedCapacity, val)
+			wg.Done()
+		case gobatcher.ProvisionDoneEvent:
+			wg.Done()
+		}
+	})
+
+	wg.Add(2)
+	expectedCapacity = 0
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(0), res.MaxCapacity())
+
+	wg.Add(2)
+	expectedCapacity = 0
+	res.SetSharedCapacity(1000)
+	wg.Wait()
+	assert.Equal(t, uint32(1000), res.MaxCapacity())
+
+	wg.Add(1)
+	expectedCapacity = 1000
+	res.GiveMe(9999)
+	wg.Wait()
+	assert.Equal(t, uint32(1000), res.Capacity())
+	assert.Equal(t, uint32(1000), res.MaxCapacity())
 }

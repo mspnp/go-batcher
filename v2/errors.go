@@ -18,6 +18,7 @@ var (
 	BufferNotAllocated           = errors.New("the buffer was never allocated, make sure to create a Batcher by calling NewBatcher().")
 	ImproperOrderError           = errors.New("methods can only be called in this order Start() > Stop().")
 	NoOperationError             = errors.New("no operation was provided.")
+	InitializationOnlyError      = errors.New("this property can only be set before Start() is called.")
 )
 
 type PartitionsOutOfRangeError struct {

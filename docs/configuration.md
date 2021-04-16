@@ -57,13 +57,7 @@ After creation, you must call Start() on a Batcher to begin processing. You can 
 Creating a new Operation with all defaults might look like this...
 
 ```go
-operation := gobatcher.NewOperation(&watcher, cost, payload)
-```
-
-Creating with all available configuration options might look like this...
-
-```go
-operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
+operation := gobatcher.NewOperation(&watcher, cost, payload, allowBatch)
 ```
 
 - __watcher__ [REQUIRED]: To create a new Operation, you must pass a reference to a Watcher. When this Operation is put into a batch, it is to this Watcher that it will be raised.
@@ -72,7 +66,7 @@ operation := gobatcher.NewOperation(&watcher, cost, payload).AllowBatch()
 
 - __payload__ [REQUIRED]: When you create a new Operation, you will provide a payload of type `interface{}`. This could be the entity you intend to write to the datastore, it could be a query that you intend to run, it could be a wrapper object containing a payload and metadata, or anything else that might be helpful so that you know what to process.
 
-- __AllowBatch__ [OPTIONAL]: If specified, the Operation is eligible to be batched with other Operations. Otherwise, it will be raised as a batch of a single Operation.
+- __allowBatch__ [REQUIRED]: Set to TRUE if the Operation is eligible to be batched with other Operations. Otherwise, it will be raised as a batch of a single Operation.
 
 ## Watcher Configuration
 
@@ -130,6 +124,7 @@ watcher := gobatcher.NewAzureSharedResource("acountName", "containerName", share
     WithFactor(1000).
     WithReservedCapacity(2000).
     WithMaxInterval(1).
+    WithLeaseTime(15).
     WithMocks(container, blob) // where container, blob are mocks that emulate an Azure Storage Account
 ```
 
@@ -146,6 +141,8 @@ watcher := gobatcher.NewAzureSharedResource("acountName", "containerName", share
 - __WithReservedCapacity__ [OPTIONAL]: You could run AzureSharedResource with only SharedCapacity, but then every time it needs to run a single operation, the latency of that operation would be increased by the time it takes to allocate a partition. To improve the latency of these one-off operations, you may reserve some capacity so it is always available. Generally, you would reserve a small capacity and share the bulk of the capacity.
 
 - __WithMaxInterval__ [DEFAULT: 500ms]: This determines the maximum time that the AzureSharedResource will wait before attempting to allocate a new partition (if one is needed). The interval is random to improve entropy, but it won't be longer than this specified time. If you want fewer storage transactions, you could increase this time, but it would slow down how quickly the AzureSharedResource can obtain new RUs.
+
+- __WithLeaseTime__ [DEFAULT: 15s]: This allows you to specify how long you want a lease to be kept after it is obtained. This can be between 15-60s for Azure or any value if provisioned WithMocks(). Generally you should leave this at the default.
 
 - __WithMocks__ [OPTIONAL]: For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account. See the included unit tests for examples.
 

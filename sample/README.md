@@ -68,3 +68,15 @@ This code sample demonstrates the usage of the `go-batcher`.
     ```bash
     curl http://localhost:8080/ingest
     ```
+
+    You can also increase SharedCapacity by 1,000 by running the following curl command.
+
+    ```bash
+    curl http://localhost:8080/inc
+    ```
+
+    Likewise, you can decrease the SharedCapacity by 1,000 by running the following curl command.
+
+    ```bash
+    curl http://localhost:8080/dec
+    ```
