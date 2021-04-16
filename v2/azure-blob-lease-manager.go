@@ -24,7 +24,7 @@ type azureBlobLeaseManager struct {
 	mocksInUse bool
 }
 
-func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string) *azureBlobLeaseManager {
+func NewAzureBlobLeaseManager(parent ieventer, accountName, containerName string) LeaseManager {
 	mgr := &azureBlobLeaseManager{
 		accountName:   &accountName,
 		containerName: &containerName,
@@ -33,19 +33,19 @@ func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) withMocks(container AzureContainer, blob AzureBlob) *azureBlobLeaseManager {
+func (m *azureBlobLeaseManager) WithMocks(container AzureContainer, blob AzureBlob) LeaseManager {
 	m.container = container
 	m.blob = blob
 	m.mocksInUse = true
 	return m
 }
 
-func (m *azureBlobLeaseManager) withMasterKey(val string) *azureBlobLeaseManager {
+func (m *azureBlobLeaseManager) WithMasterKey(val string) LeaseManager {
 	m.masterKey = &val
 	return m
 }
 
-func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
+func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 
 	// choose the appropriate credential
 	var credential azblob.Credential
@@ -95,7 +95,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 	return
 }
 
-func (m *azureBlobLeaseManager) getBlob(index int) AzureBlob {
+func (m azureBlobLeaseManager) getBlob(index int) AzureBlob {
 	if m.blob != nil {
 		return m.blob
 	} else {
@@ -104,7 +104,7 @@ func (m *azureBlobLeaseManager) getBlob(index int) AzureBlob {
 	}
 }
 
-func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int) (err error) {
+func (m azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) (err error) {
 
 	// create a blob for each partition
 	for i := 0; i < count; i++ {
@@ -137,15 +137,8 @@ func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int)
 	return
 }
 
-func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, index uint32, secondsToLease uint32) (leaseTime time.Duration) {
-
-	// constrain the secondsToLease (Azure only supports 15-60 seconds)
-	switch {
-	case !m.mocksInUse && secondsToLease < 15:
-		secondsToLease = 15
-	case !m.mocksInUse && secondsToLease > 60:
-		secondsToLease = 60
-	}
+func (m azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
+	secondsToLease := 15
 
 	// attempt to allocate the partition
 	blob := m.getBlob(int(index))

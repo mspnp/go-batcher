@@ -8,7 +8,7 @@ import (
 type ProvisionedResource interface {
 	ieventer
 	RateLimiter
-	SetCapacity(capacity uint32)
+	SetReservedCapacity(capacity uint32)
 }
 
 type provisionedResource struct {
@@ -30,13 +30,14 @@ func (r *provisionedResource) MaxCapacity() uint32 {
 	return atomic.LoadUint32(&r.maxCapacity)
 }
 
-// This returns the current allocated capacity. It is the capacity number provided when NewProvisionedResource() is called.
+// This returns the current allocated capacity. For this rate limiter that will always be the ReservedCapacity which was
+// initialized via NewProvisionedResource() or changed via SetReservedCapacity().
 func (r *provisionedResource) Capacity() uint32 {
 	return atomic.LoadUint32(&r.maxCapacity)
 }
 
 // This allows you to set the ReservedCapacity to a different value after the RateLimiter has started.
-func (r *provisionedResource) SetCapacity(capacity uint32) {
+func (r *provisionedResource) SetReservedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.maxCapacity, capacity)
 	r.emit(CapacityEvent, int(capacity), "", nil)
 }

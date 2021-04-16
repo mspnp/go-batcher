@@ -16,20 +16,21 @@ const (
 	maxPartitions = 500
 )
 
-type AzureSharedResource interface {
+type SharedResource interface {
 	ieventer
 	RateLimiter
-	WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource
-	WithMasterKey(val string) AzureSharedResource
-	WithFactor(val uint32) AzureSharedResource
-	WithReservedCapacity(val uint32) AzureSharedResource
-	WithMaxInterval(val uint32) AzureSharedResource
-	WithLeaseTime(val uint32) AzureSharedResource
-	SetSharedCapacity(capacity uint32)
+	//WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource
+	//WithMasterKey(val string) AzureSharedResource
+	WithFactor(val uint32) SharedResource
+	WithReservedCapacity(val uint32) SharedResource
+	WithSharedCapacity(val uint32, mgr LeaseManager) SharedResource
+	WithMaxInterval(val uint32) SharedResource
+	//WithLeaseTime(val uint32) AzureSharedResource
 	SetReservedCapacity(capacity uint32)
+	SetSharedCapacity(capacity uint32)
 }
 
-type azureSharedResource struct {
+type sharedResource struct {
 	eventer
 
 	// configuration items that should not change after Provision()
@@ -37,7 +38,6 @@ type azureSharedResource struct {
 	maxInterval      uint32
 	sharedCapacity   uint32
 	reservedCapacity uint32
-	leaseTime        uint32
 
 	// used for internal operations
 	leaseManager LeaseManager
@@ -60,20 +60,17 @@ type azureSharedResource struct {
 
 // This function should be called to create a new AzureSharedResource. The accountName and containerName refer to the details
 // of an Azure Storage Account and container that the lease blobs can be created in. If multiple processes are sharing the same
-// capacity, they should all point to the same container. The sharedCapacity parameter is the maximum shared capacity for the
-// resource. For example, if you provision a Cosmos database with 20k RU, you might set sharedCapacity to 20,000. Capacity is renewed
-// every 1 second. Commonly after calling NewAzureSharedResource() you will chain some WithXXXX methods, for instance...
-// `NewAzureSharedResource().WithMasterKey(key)`.
-func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) AzureSharedResource {
-	res := &azureSharedResource{
-		sharedCapacity: sharedCapacity,
-	}
-	mgr := newAzureBlobLeaseManager(res, accountName, containerName)
-	res.leaseManager = mgr
+// capacity, they should all point to the same container. Commonly after calling NewSharedResource() you will chain some WithXXXX methods, for instance...
+// `NewSharedResource().WithMasterKey(key)`.
+func NewSharedResource(accountName, containerName string) SharedResource {
+	res := &sharedResource{}
+	//mgr := newAzureBlobLeaseManager(res, accountName, containerName)
+	//res.leaseManager = mgr
 	return res
 }
 
 // This allows you to provide mocked objects for container and blob for unit tests.
+/*
 func (r *azureSharedResource) WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
@@ -85,9 +82,11 @@ func (r *azureSharedResource) WithMocks(container AzureContainer, blob AzureBlob
 	}
 	return r
 }
+*/
 
 // You must provide credentials for the AzureSharedResource to access the Azure Storage Account. Currently, the only supported method
 // is to provide a read/write key via WithMasterKey(). This method is required unless you calling WithMocks().
+/*
 func (r *azureSharedResource) WithMasterKey(val string) AzureSharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
@@ -99,11 +98,12 @@ func (r *azureSharedResource) WithMasterKey(val string) AzureSharedResource {
 	}
 	return r
 }
+*/
 
 // You may provide a factor that determines how much capacity each partition is worth. For instance, if you provision a Cosmos database
 // with 20k RU, you might use a factor of 1000, meaning 20 partitions would be created, each worth 1k RU. If not provided, the factor
 // defaults to `1`. There is a limit of 500 partitions, so if you have a shared capacity in excess of 500, you must provide a factor.
-func (r *azureSharedResource) WithFactor(val uint32) AzureSharedResource {
+func (r *sharedResource) WithFactor(val uint32) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != batcherPhaseUninitialized {
@@ -118,7 +118,7 @@ func (r *azureSharedResource) WithFactor(val uint32) AzureSharedResource {
 // and 20,000 shared capacity. Any of the processes could obtain a maximum of 22,000 capacity. Capacity is renewed every 1 second.
 // Generally you use reserved capacity to reduce your latency - you no longer have to wait on a partition to be acquired in order to
 // process a small number of records.
-func (r *azureSharedResource) WithReservedCapacity(val uint32) AzureSharedResource {
+func (r *sharedResource) WithReservedCapacity(val uint32) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != batcherPhaseUninitialized {
@@ -128,10 +128,24 @@ func (r *azureSharedResource) WithReservedCapacity(val uint32) AzureSharedResour
 	return r
 }
 
+// You may provide a shared capacity. The sharedCapacity parameter is the maximum shared capacity for the resource.
+// For example, if you provision a Cosmos database with 20k RU, you might set sharedCapacity to 20,000. Capacity is
+// renewed every 1 second.
+func (r *sharedResource) WithSharedCapacity(val uint32, mgr LeaseManager) SharedResource {
+	r.phaseMutex.Lock()
+	defer r.phaseMutex.Unlock()
+	if r.phase != batcherPhaseUninitialized {
+		panic(InitializationOnlyError)
+	}
+	atomic.StoreUint32(&r.sharedCapacity, val)
+	r.leaseManager = mgr
+	return r
+}
+
 // The rate limiter will attempt to obtain an exclusive lease on a partition (when needed) every so often. The interval is random to
 // reduce the number of collisions and to provide an equal opportunity for processes to compete for partitions. This setting determines
 // the maximum amount of time between intervals. It defaults to `500` and is measured in milliseconds.
-func (r *azureSharedResource) WithMaxInterval(val uint32) AzureSharedResource {
+func (r *sharedResource) WithMaxInterval(val uint32) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != batcherPhaseUninitialized {
@@ -141,22 +155,9 @@ func (r *azureSharedResource) WithMaxInterval(val uint32) AzureSharedResource {
 	return r
 }
 
-// You may provide a lease time in seconds. This defaults to 15 seconds. This is passed to the lease call made in Azure provided it is between
-// 15 and 60 seconds. If you provide a lower value, 15 seconds will be used. If you provide a greater value, 60 seconds will be used. If you are
-// using WithMocks, this constraint on the time will the ignored.
-func (r *azureSharedResource) WithLeaseTime(val uint32) AzureSharedResource {
-	r.phaseMutex.Lock()
-	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
-		panic(InitializationOnlyError)
-	}
-	r.leaseTime = val
-	return r
-}
-
 // This returns the maximum capacity that could ever be obtained by the rate limiter. It is `SharedCapacity + ReservedCapacity`. This reflects
 // the limit of 500 partitions.
-func (r *azureSharedResource) MaxCapacity() uint32 {
+func (r *sharedResource) MaxCapacity() uint32 {
 	sharedCapacity := atomic.LoadUint32(&r.sharedCapacity)
 	max := r.factor * maxPartitions
 	if sharedCapacity > max {
@@ -166,23 +167,23 @@ func (r *azureSharedResource) MaxCapacity() uint32 {
 }
 
 // This returns the current allocated capacity. It is `NumberOfPartitionsControlled x Factor + ReservedCapacity`.
-func (r *azureSharedResource) Capacity() uint32 {
+func (r *sharedResource) Capacity() uint32 {
 	return atomic.LoadUint32(&r.capacity) + atomic.LoadUint32(&r.reservedCapacity)
 }
 
 // This allows you to set the SharedCapacity to a different value after the RateLimiter has started.
-func (r *azureSharedResource) SetSharedCapacity(capacity uint32) {
+func (r *sharedResource) SetSharedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.sharedCapacity, capacity)
 	r.scheduleProvision()
 }
 
 // This allows you to set the ReservedCapacity to a different value after the RateLimiter has started.
-func (r *azureSharedResource) SetReservedCapacity(capacity uint32) {
+func (r *sharedResource) SetReservedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.reservedCapacity, capacity)
 	r.calc()
 }
 
-func (r *azureSharedResource) calc() {
+func (r *sharedResource) calc() {
 
 	// get a read lock
 	r.partlock.RLock()
@@ -211,7 +212,7 @@ func (r *azureSharedResource) calc() {
 // For instance, if you have a large queue of records to process, you might call GiveMe() every time new records are added to the queue
 // and every time a batch is completed. Another common pattern is to call GiveMe() on a timer to keep it generally consistent with the
 // capacity you need.
-func (r *azureSharedResource) GiveMe(target uint32) {
+func (r *sharedResource) GiveMe(target uint32) {
 
 	// reduce capacity request by reserved capacity
 	reservedCapacity := atomic.LoadUint32(&r.reservedCapacity)
@@ -232,7 +233,7 @@ func (r *azureSharedResource) GiveMe(target uint32) {
 
 }
 
-func (r *azureSharedResource) scheduleProvision() {
+func (r *sharedResource) scheduleProvision() {
 	select {
 	case r.provision <- struct{}{}:
 		// successfully set the provision flag
@@ -241,7 +242,7 @@ func (r *azureSharedResource) scheduleProvision() {
 	}
 }
 
-func (r *azureSharedResource) getAllocatedAndRandomUnallocatedPartition() (count, index uint32, err error) {
+func (r *sharedResource) getAllocatedAndRandomUnallocatedPartition() (count, index uint32, err error) {
 
 	// get a read lock
 	r.partlock.RLock()
@@ -271,7 +272,7 @@ func (r *azureSharedResource) getAllocatedAndRandomUnallocatedPartition() (count
 	return
 }
 
-func (r *azureSharedResource) setPartitionId(index uint32, id string) {
+func (r *sharedResource) setPartitionId(index uint32, id string) {
 
 	// get a write lock
 	r.partlock.Lock()
@@ -283,7 +284,7 @@ func (r *azureSharedResource) setPartitionId(index uint32, id string) {
 
 }
 
-func (r *azureSharedResource) clearPartitionId(index uint32) {
+func (r *sharedResource) clearPartitionId(index uint32) {
 
 	// get a write lock
 	r.partlock.Lock()
@@ -297,7 +298,7 @@ func (r *azureSharedResource) clearPartitionId(index uint32) {
 
 }
 
-func (r *azureSharedResource) provisionBlobs(ctx context.Context) {
+func (r *sharedResource) provisionBlobs(ctx context.Context) {
 
 	// get a write lock on partitions
 	r.partlock.Lock()
@@ -320,7 +321,7 @@ func (r *azureSharedResource) provisionBlobs(ctx context.Context) {
 	r.emit(ProvisionStartEvent, count, "start blob provisioning", nil)
 
 	// provision partitions
-	if err := r.leaseManager.createPartitions(ctx, count); err != nil {
+	if err := r.leaseManager.CreatePartitions(ctx, count); err != nil {
 		r.emit(ErrorEvent, 0, "creating partitions raised an error", err)
 	}
 
@@ -331,7 +332,7 @@ func (r *azureSharedResource) provisionBlobs(ctx context.Context) {
 
 // Call this method to start the processing loop. The processing loop runs on a random interval not to exceed MaxInterval and
 // attempts to obtain an exclusive lease on blob partitions to fulfill the capacity requests.
-func (r *azureSharedResource) Start(ctx context.Context) (err error) {
+func (r *sharedResource) Start(ctx context.Context) (err error) {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
@@ -342,23 +343,18 @@ func (r *azureSharedResource) Start(ctx context.Context) (err error) {
 	}
 
 	// check requirements
-	if r.leaseManager == nil {
-		err = UndefinedLeaseManagerError
-		return
-	}
 	if r.factor == 0 {
 		r.factor = 1 // assume 1:1
 	}
 	if r.maxInterval == 0 {
 		r.maxInterval = 500 // default to 500ms
 	}
-	if r.leaseTime == 0 {
-		r.leaseTime = 15 // default to 15s
-	}
 
 	// provision the container
-	if err = r.leaseManager.provision(ctx); err != nil {
-		return
+	if r.leaseManager != nil {
+		if err = r.leaseManager.Provision(ctx); err != nil {
+			return
+		}
 	}
 
 	// prepare for shutdown
@@ -403,7 +399,7 @@ func (r *azureSharedResource) Start(ctx context.Context) (err error) {
 
 				// attempt to allocate the partition
 				id := fmt.Sprint(uuid.New())
-				leaseTime := r.leaseManager.leasePartition(ctx, id, index, r.leaseTime)
+				leaseTime := r.leaseManager.LeasePartition(ctx, id, index)
 				if leaseTime == 0 {
 					continue Loop
 				}
@@ -433,7 +429,7 @@ func (r *azureSharedResource) Start(ctx context.Context) (err error) {
 }
 
 // Call this method to stop the processing loop. You may not restart after stopping.
-func (r *azureSharedResource) Stop() {
+func (r *sharedResource) Stop() {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
