@@ -63,7 +63,8 @@ func TestEnqueue(t *testing.T) {
 
 	t.Run("operations cannot exceed max capacity (shared)", func(t *testing.T) {
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithReservedCapacity(2000)
+			WithReservedCapacity(2000).
+			WithFactor(1000)
 		batcher := gobatcher.NewBatcher().
 			WithRateLimiter(res)
 		err := batcher.Start()
@@ -714,7 +715,8 @@ func TestTimers(t *testing.T) {
 	for _, d := range capacityIntervalTests {
 		testName := fmt.Sprintf("ensure capacity requests are raised every %v", d.id)
 		t.Run(testName, func(t *testing.T) {
-			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000)
+			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+				WithFactor(1000)
 			batcher := gobatcher.NewBatcher().
 				WithRateLimiter(res).
 				WithCapacityInterval(d.interval).

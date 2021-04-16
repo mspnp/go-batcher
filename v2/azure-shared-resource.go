@@ -150,9 +150,15 @@ func (r *azureSharedResource) WithLeaseTime(val uint32) AzureSharedResource {
 	return r
 }
 
-// This returns the maximum capacity that could ever be obtained by the rate limiter. It is `SharedCapacity + ReservedCapacity`.
+// This returns the maximum capacity that could ever be obtained by the rate limiter. It is `SharedCapacity + ReservedCapacity`. This reflects
+// the limit of 500 partitions.
 func (r *azureSharedResource) MaxCapacity() uint32 {
-	return atomic.LoadUint32(&r.sharedCapacity) + atomic.LoadUint32(&r.reservedCapacity)
+	sharedCapacity := atomic.LoadUint32(&r.sharedCapacity)
+	max := r.factor * 500
+	if sharedCapacity > max {
+		sharedCapacity = max
+	}
+	return sharedCapacity + atomic.LoadUint32(&r.reservedCapacity)
 }
 
 // This returns the current allocated capacity. It is `NumberOfPartitionsControlled x Factor + ReservedCapacity`.

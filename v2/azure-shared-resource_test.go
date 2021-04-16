@@ -312,16 +312,22 @@ func TestAzureSRStart_BlobErrorsCascade(t *testing.T) {
 	}
 }
 
-func TestMaxCapacity(t *testing.T) {
+func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithReservedCapacity(2000).
+		WithFactor(1000)
+	max := res.MaxCapacity()
+	assert.Equal(t, uint32(12000), max)
+}
 
-	t.Run("max-capacity is shared-capacity plus reserved-capacity", func(t *testing.T) {
-		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithReservedCapacity(2000)
-		max := res.MaxCapacity()
-		assert.Equal(t, uint32(12000), max)
-	})
-
+func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
+	res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithReservedCapacity(2000).
+		WithFactor(1)
+	max := res.MaxCapacity()
+	assert.Equal(t, uint32(2500), max)
 }
 
 func TestCapacity(t *testing.T) {
