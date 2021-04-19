@@ -416,6 +416,9 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 				// clear the partition after the lease
 				go func(i uint32) {
 					time.Sleep(leaseTime)
+					if ctx.Err() != nil {
+						return
+					}
 					r.clearPartitionId(i)
 					r.emit(ReleasedEvent, int(index), "", nil)
 					r.calc()

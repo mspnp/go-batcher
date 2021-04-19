@@ -108,6 +108,8 @@ func (mgr *mockLeaseManager) LeasePartition(ctx context.Context, id string, inde
 }
 
 func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -122,13 +124,15 @@ func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 			wg.Done()
 		}
 	})
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	mgr.AssertExpectations(t)
 }
 
 func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 500).Return(nil).Once()
@@ -146,13 +150,15 @@ func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
 			wg.Done()
 		}
 	})
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	mgr.AssertExpectations(t)
 }
 
 func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 11).Return(nil).Once()
@@ -168,13 +174,15 @@ func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
 			wg.Done()
 		}
 	})
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	mgr.AssertExpectations(t)
 }
 
 func TestAzureSRStart_ContainerErrorsCascade(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	testCases := map[string]error{
 		"unknown error": fmt.Errorf("unknown mocked error"),
 		"storage error": StorageError{serviceCode: azblob.ServiceCodeAppendPositionConditionNotMet},
@@ -186,7 +194,7 @@ func TestAzureSRStart_ContainerErrorsCascade(t *testing.T) {
 			res := gobatcher.NewSharedResource("accountName", "containerName").
 				WithSharedCapacity(10000, mgr).
 				WithFactor(1000)
-			err := res.Start(context.Background())
+			err := res.Start(ctx)
 			assert.Equal(t, serr, err, "expecting the error to be thrown back from start")
 			mgr.AssertExpectations(t)
 		})
@@ -194,6 +202,8 @@ func TestAzureSRStart_ContainerErrorsCascade(t *testing.T) {
 }
 
 func TestAzureSRStart_BlobErrorsCascade(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	testCases := map[string]error{
 		"unknown error": fmt.Errorf("unknown mocked error"),
 		"storage error": StorageError{serviceCode: azblob.ServiceCodeBlobArchived},
@@ -215,7 +225,7 @@ func TestAzureSRStart_BlobErrorsCascade(t *testing.T) {
 					wg.Done()
 				}
 			})
-			err := res.Start(context.Background())
+			err := res.Start(ctx)
 			assert.NoError(t, err, "not expecting a start error")
 			wg.Wait()
 			mgr.AssertExpectations(t)
@@ -249,6 +259,9 @@ func TestCapacityIsEqualToReservedWhenThereIsNoRequestForCapacity(t *testing.T) 
 }
 
 func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -271,7 +284,7 @@ func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
@@ -285,6 +298,9 @@ func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
 }
 
 func TestGiveMeGrantsCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -306,7 +322,7 @@ func TestGiveMeGrantsCapacity(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(0), res.Capacity(), "expecting the capacity to be zero before GiveMe()")
@@ -320,6 +336,9 @@ func TestGiveMeGrantsCapacity(t *testing.T) {
 }
 
 func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -341,7 +360,7 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
@@ -355,6 +374,9 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 }
 
 func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -376,7 +398,7 @@ func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
@@ -390,6 +412,9 @@ func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 }
 
 func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 13).Return(nil).Once()
@@ -411,7 +436,7 @@ func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(0), res.Capacity(), "expecting the capacity to be zero before GiveMe()")
@@ -425,6 +450,9 @@ func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
 }
 
 func TestGiveMeDoesNotGrantAboveCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -446,7 +474,7 @@ func TestGiveMeDoesNotGrantAboveCapacity(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
@@ -460,6 +488,8 @@ func TestGiveMeDoesNotGrantAboveCapacity(t *testing.T) {
 }
 
 func TestNoProvisionWithoutSharedCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(10000)
 	var wg sync.WaitGroup
@@ -470,23 +500,25 @@ func TestNoProvisionWithoutSharedCapacity(t *testing.T) {
 		}
 	})
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 }
 
 func TestSRCannotBeStartedMoreThanOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(10000)
 	var err1, err2 error
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		err1 = res.Start(context.Background())
+		err1 = res.Start(ctx)
 		wg.Done()
 	}()
 	go func() {
-		err2 = res.Start(context.Background())
+		err2 = res.Start(ctx)
 		wg.Done()
 	}()
 	wg.Wait()
@@ -695,7 +727,7 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 		}
 	})
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	var start uint32
@@ -709,6 +741,9 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 */
 
 func TestSetSharedCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -717,33 +752,27 @@ func TestSetSharedCapacity(t *testing.T) {
 		WithSharedCapacity(10000, mgr).
 		WithFactor(1000)
 	var wg sync.WaitGroup
-	var start, done uint32
+	var done uint32
 	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
-		case gobatcher.ProvisionStartEvent:
-			atomic.AddUint32(&start, 1)
-			wg.Done()
 		case gobatcher.ProvisionDoneEvent:
 			atomic.AddUint32(&done, 1)
 			wg.Done()
 		}
 	})
 
-	wg.Add(2)
-	err := res.Start(context.Background())
+	wg.Add(1)
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
-	assert.Equal(t, uint32(1), start)
 	assert.Equal(t, uint32(1), done)
 	assert.Equal(t, uint32(10000), res.MaxCapacity())
 
-	atomic.StoreUint32(&start, 0)
 	atomic.StoreUint32(&done, 0)
 
-	wg.Add(2)
+	wg.Add(1)
 	res.SetSharedCapacity(20000)
 	wg.Wait()
-	assert.Equal(t, uint32(1), start)
 	assert.Equal(t, uint32(1), done)
 	assert.Equal(t, uint32(20000), res.MaxCapacity())
 
@@ -751,6 +780,9 @@ func TestSetSharedCapacity(t *testing.T) {
 }
 
 func TestSetReservedCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -766,7 +798,7 @@ func TestSetReservedCapacity(t *testing.T) {
 	})
 
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(10000), res.MaxCapacity())
@@ -782,6 +814,9 @@ func TestSetReservedCapacity(t *testing.T) {
 }
 
 func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
@@ -803,7 +838,7 @@ func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 
 	provisionWg.Add(1)
 	capacityWg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	provisionWg.Wait()
 	capacityWg.Wait()
@@ -824,13 +859,19 @@ func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-/*
 func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
-	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-		WithMocks(getMocks()).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 0).Return(nil).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(100 * time.Millisecond).Times(5)
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
 		WithFactor(1000).
-		WithMaxInterval(1).
-		WithLeaseTime(1)
+		WithMaxInterval(1)
 	var wg sync.WaitGroup
 
 	provisionListener := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
@@ -840,9 +881,10 @@ func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 		}
 	})
 	wg.Add(1)
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
+	assert.Equal(t, uint32(0), res.Capacity())
 	res.RemoveListener(provisionListener)
 
 	capacityListener := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
@@ -866,10 +908,13 @@ func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 	wg.Add(5)
 	res.SetSharedCapacity(0)
 	wg.Wait()
+	assert.Equal(t, uint32(0), res.Capacity())
 }
-*/
 
 func TestStartingWithZeroSharedCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 0).Return(nil).Once()
@@ -893,7 +938,7 @@ func TestStartingWithZeroSharedCapacity(t *testing.T) {
 
 	wg.Add(2)
 	expectedCapacity = 0
-	err := res.Start(context.Background())
+	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	wg.Wait()
 	assert.Equal(t, uint32(0), res.MaxCapacity())
