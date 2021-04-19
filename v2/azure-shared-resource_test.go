@@ -127,6 +127,7 @@ func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
+// TODO: Review - test fails intermittently
 func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
@@ -352,91 +353,112 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 
 // LILA STARTED HERE
 
-/*
+func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
 
-
-
-	t.Run("give-me does not grant if reserve is equal", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithReservedCapacity(2000).
-			WithMaxInterval(1)
-		var allocated int
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AllocatedEvent:
-				allocated += 1
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(2000)
-		time.Sleep(1 * time.Second)
-		assert.Equal(t, 0, allocated, "expecting no allocations because the target was not more than reserved capacity")
-		cap := res.Capacity()
-		assert.Equal(t, uint32(2000), cap, "expecting capacity to reflect the reserved capacity")
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithReservedCapacity(2000).
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		case gobatcher.TargetEvent:
+			assert.Equal(t, 0, val, "expecting no additional capacity is actually needed to fulfill the request")
+			wg.Done()
+		}
 	})
 
-	t.Run("give-me does not grant if reserve is higher", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithReservedCapacity(2000).
-			WithMaxInterval(1)
-		var allocated int
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AllocatedEvent:
-				allocated += 1
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(1800)
-		time.Sleep(1 * time.Second)
-		assert.Equal(t, 0, allocated, "expecting no allocations because the target was not more than reserved capacity")
-		cap := res.Capacity()
-		assert.Equal(t, uint32(2000), cap, "expecting capacity to reflect the reserved capacity")
-	})
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
 
-	t.Run("give-me grants according to factor", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(777).
-			WithMaxInterval(1)
-		var allocated uint32
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AllocatedEvent:
-				atomic.AddUint32(&allocated, 1)
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(1800)
-		time.Sleep(1 * time.Second)
-		assert.Equal(t, uint32(3), atomic.LoadUint32(&allocated), "expecting 3 allocations because that is the lowest amount higher than the target")
-		cap := res.Capacity()
-		assert.Equal(t, uint32(2331), cap, "expecting the capacity to reflect 3 allocations")
-	})
+	wg.Add(1)
+	res.GiveMe(1800)
+	wg.Wait()
+	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved")
 
-	t.Run("give-me does not grant above capacity", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithReservedCapacity(2000).
-			WithMaxInterval(1)
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(200000)
-		time.Sleep(1 * time.Second)
-		cap := res.Capacity()
-		assert.Equal(t, uint32(12000), cap, "expecting the capacity to be at the maximum")
-	})
-
+	mgr.AssertExpectations(t)
 }
 
+func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 13).Return(nil).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(3)
+
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
+		WithFactor(777).
+		WithMaxInterval(1)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		case gobatcher.TargetEvent:
+			assert.Equal(t, 1800, val, "expecting 1800 additional capacity is needed")
+			wg.Done()
+		}
+	})
+
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(0), res.Capacity(), "expecting the capacity to be zero before GiveMe()")
+
+	wg.Add(4) // 3 CapacityEvents + 1 TargetEvent
+	res.GiveMe(1800)
+	wg.Wait()
+	assert.Equal(t, uint32(2331), res.Capacity(), "expecting the capacity to reflect 3 partitions")
+
+	mgr.AssertExpectations(t)
+}
+
+func TestGiveMeDoesNotGrantAboveCapacity(t *testing.T) {
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithReservedCapacity(2000).
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		case gobatcher.TargetEvent:
+			assert.Equal(t, 11000, val, "expecting 11000 additional capacity is needed")
+			wg.Done()
+		}
+	})
+
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
+
+	wg.Add(11)
+	res.GiveMe(13000)
+	wg.Wait()
+	assert.Equal(t, uint32(12000), res.Capacity(), "expecting the capacity to be at the maximum of 12000 instead of the requested 13000")
+
+	mgr.AssertExpectations(t)
+}
+
+/*
 func TestAzureSRStart(t *testing.T) {
 	ctx := context.Background()
 
