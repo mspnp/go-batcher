@@ -531,52 +531,69 @@ func TestSRCannotBeStartedMoreThanOnce(t *testing.T) {
 	}
 }
 
+func TestAzureSRStartAnnouncesStartingCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 1).Return(nil).Once()
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(1000, mgr).
+		WithFactor(1000).
+		WithReservedCapacity(2000)
+	var count, value uint32
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			atomic.AddUint32(&count, 1)
+			atomic.AddUint32(&value, uint32(val))
+		}
+	})
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting 1 capacity event")
+	assert.Equal(t, uint32(2000), atomic.LoadUint32(&value), "expecting only the reserved capacity")
+	mgr.AssertExpectations(t)
+}
+
+// TODO: Review - long test
+func TestAzureSRStartCanLeaseAndReleasePartitions(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(2)
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000)
+	var allocated, released uint32
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.AllocatedEvent:
+			atomic.AddUint32(&allocated, 1)
+		case gobatcher.ReleasedEvent:
+			atomic.AddUint32(&released, 1)
+		}
+	})
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	res.GiveMe(1800)
+	time.Sleep(2 * time.Second)
+	res.GiveMe(0)
+	time.Sleep(15 * time.Second)
+	assert.Equal(t, uint32(2), atomic.LoadUint32(&allocated), "expecting 2 allocations to meet capacity requirement")
+	assert.Equal(t, uint32(2), atomic.LoadUint32(&released), "expecting 2 releases because more than 15 seconds have passed")
+
+	mgr.AssertExpectations(t)
+}
+
 /*
 func TestAzureSRStart(t *testing.T) {
 	ctx := context.Background()
-
-	t.Run("start announces starting capacity", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithReservedCapacity(2000)
-		var count, value uint32
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.CapacityEvent:
-				atomic.AddUint32(&count, 1)
-				atomic.AddUint32(&value, uint32(val))
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting 1 capacity event")
-		assert.Equal(t, uint32(2000), atomic.LoadUint32(&value), "expecting only the reserved capacity")
-	})
-
-	t.Run("start can lease and release partitions", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000)
-		var allocated, released uint32
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AllocatedEvent:
-				atomic.AddUint32(&allocated, 1)
-			case gobatcher.ReleasedEvent:
-				atomic.AddUint32(&released, 1)
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(1800)
-		time.Sleep(2 * time.Second)
-		res.GiveMe(0)
-		time.Sleep(18 * time.Second)
-		assert.Equal(t, uint32(2), atomic.LoadUint32(&allocated), "expecting 2 allocations to meet capacity requirement")
-		assert.Equal(t, uint32(2), atomic.LoadUint32(&released), "expecting 2 releases because more than 15 seconds have passed")
-	})
 
 	t.Run("start can lease, fail, and handle errors", func(t *testing.T) {
 		serr := StorageError{serviceCode: azblob.ServiceCodeLeaseAlreadyPresent}
@@ -621,26 +638,34 @@ func TestAzureSRStart(t *testing.T) {
 		assert.Equal(t, uint32(1), atomic.LoadUint32(&failed), "expecting 1 failed (already leased)")
 		assert.Equal(t, uint32(2), atomic.LoadUint32(&errored), "expecting 2 errors (unknown and unrelated)")
 	})
+*/
 
-	t.Run("start only allocates to max capacity", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(80000)
-		time.Sleep(100 * time.Millisecond)
-		cap := res.Capacity()
-		assert.Equal(t, uint32(10000), cap, "expecting capacity equal to max")
-	})
+func TestAzureSRStartOnlyAllocatesToMaxCapacity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	res.GiveMe(80000)
+	time.Sleep(100 * time.Millisecond)
+	cap := res.Capacity()
+	assert.Equal(t, uint32(10000), cap, "expecting capacity equal to max")
+	mgr.AssertExpectations(t)
 }
 
+/*
 func TestAzureSRStop(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("stop emits shutdown", func(t *testing.T) {
+		t.Run("stop emits shutdown", func(t *testing.T) {
 		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
 			WithMocks(getMocks()).
 			WithFactor(1000).
@@ -664,57 +689,71 @@ func TestAzureSRStop(t *testing.T) {
 		}
 	})
 
-	t.Run("stop before start does not shutdown", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		done := make(chan bool)
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.ShutdownEvent:
-				close(done)
-			}
-		})
-		res.Stop()
-		select {
-		case <-done:
-			// success
-			assert.Fail(t, "expected no shutdown")
-		case <-time.After(1 * time.Second):
-			// timeout; no shutdown as expected
+t.Run("stop before start does not shutdown", func(t *testing.T) {
+	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
+		WithMocks(getMocks()).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	done := make(chan bool)
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ShutdownEvent:
+			close(done)
 		}
 	})
+	res.Stop()
+	select {
+	case <-done:
+		// success
+		assert.Fail(t, "expected no shutdown")
+	case <-time.After(1 * time.Second):
+		// timeout; no shutdown as expected
+	}
+})
+*/
 
-	t.Run("multiple stops shutdown only once", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		var count uint32
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.ShutdownEvent:
-				atomic.AddUint32(&count, 1)
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		go func() {
-			res.Stop()
-		}()
-		go func() {
-			res.Stop()
-		}()
-		time.Sleep(1 * time.Second)
-		assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting only a single shutdown")
+func TestAzureSRMultipleStopShutdownOnlyOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000).
+		WithMaxInterval(1)
+	var count uint32
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ShutdownEvent:
+			atomic.AddUint32(&count, 1)
+		}
 	})
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	go func() {
+		res.Stop()
+	}()
+	go func() {
+		res.Stop()
+	}()
+	time.Sleep(1 * time.Second)
+	assert.Equal(t, uint32(1), atomic.LoadUint32(&count), "expecting only a single shutdown")
 
+	mgr.AssertExpectations(t)
 }
 
 func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
-	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-		WithMocks(getMocks()).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := &mockLeaseManager{}
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
 		WithFactor(1000).
 		WithMaxInterval(1)
 	var wg sync.WaitGroup
@@ -737,8 +776,9 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
 	assert.Equal(t, atomic.LoadUint32(&start), atomic.LoadUint32(&count), "expecting no events after removing the listener")
+
+	mgr.AssertExpectations(t)
 }
-*/
 
 func TestSetSharedCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
