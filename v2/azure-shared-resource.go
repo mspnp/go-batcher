@@ -27,7 +27,7 @@ type SharedResource interface {
 	WithMaxInterval(val uint32) SharedResource
 	//WithLeaseTime(val uint32) AzureSharedResource
 	SetReservedCapacity(capacity uint32)
-	SetSharedCapacity(capacity uint32)
+	SetSharedCapacity(capacity uint32) error
 }
 
 type sharedResource struct {
@@ -172,9 +172,13 @@ func (r *sharedResource) Capacity() uint32 {
 }
 
 // This allows you to set the SharedCapacity to a different value after the RateLimiter has started.
-func (r *sharedResource) SetSharedCapacity(capacity uint32) {
+func (r *sharedResource) SetSharedCapacity(capacity uint32) error {
+	if r.leaseManager == nil {
+		return SharedCapacityNotProvisioned
+	}
 	atomic.StoreUint32(&r.sharedCapacity, capacity)
 	r.scheduleProvision()
+	return nil
 }
 
 // This allows you to set the ReservedCapacity to a different value after the RateLimiter has started.
@@ -350,19 +354,24 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 		r.maxInterval = 500 // default to 500ms
 	}
 
-	// provision the container
-	if r.leaseManager != nil {
-		if err = r.leaseManager.Provision(ctx); err != nil {
-			return
-		}
-	}
-
 	// prepare for shutdown
 	r.shutdown.Add(1)
 
 	// init flowcontrol chans
 	r.stop = make(chan struct{})
 	r.provision = make(chan struct{}, 1)
+
+	// if there is no shared capacity; there should be no event loop
+	if r.leaseManager == nil {
+		r.calc()
+		r.phase = rateLimiterPhaseStarted
+		return
+	}
+
+	// provision the container
+	if err = r.leaseManager.Provision(ctx); err != nil {
+		return
+	}
 	r.scheduleProvision()
 
 	// run the loop to try and allocate resources
@@ -422,7 +431,7 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 		}
 	}()
 
-	// increment phase
+	// update the phase
 	r.phase = rateLimiterPhaseStarted
 
 	return

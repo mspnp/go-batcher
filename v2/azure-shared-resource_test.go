@@ -127,17 +127,19 @@ func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-// TODO: Review - test fails intermittently
 func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 500).Return(nil).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
-		WithSharedCapacity(10000, mgr)
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1)
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			wg.Done()
 		case gobatcher.ErrorEvent:
 			assert.Equal(t, 10000, val)
 			wg.Done()
@@ -351,8 +353,6 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-// LILA STARTED HERE
-
 func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 	mgr := &mockLeaseManager{}
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
@@ -458,34 +458,49 @@ func TestGiveMeDoesNotGrantAboveCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
+func TestNoProvisionWithoutSharedCapacity(t *testing.T) {
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithReservedCapacity(10000)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(1)
+	err := res.Start(context.Background())
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+}
+
+func TestSRCannotBeStartedMoreThanOnce(t *testing.T) {
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithReservedCapacity(10000)
+	var err1, err2 error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		err1 = res.Start(context.Background())
+		wg.Done()
+	}()
+	go func() {
+		err2 = res.Start(context.Background())
+		wg.Done()
+	}()
+	wg.Wait()
+	if err1 != nil {
+		assert.Equal(t, gobatcher.ImproperOrderError, err1)
+	} else if err2 != nil {
+		assert.Equal(t, gobatcher.ImproperOrderError, err2)
+	} else {
+		t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
+	}
+}
+
 /*
 func TestAzureSRStart(t *testing.T) {
 	ctx := context.Background()
-
-	t.Run("start is callable only once", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000)
-		var err1, err2 error
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			err1 = res.Start(ctx)
-			wg.Done()
-		}()
-		go func() {
-			err2 = res.Start(ctx)
-			wg.Done()
-		}()
-		wg.Wait()
-		if err1 != nil {
-			assert.Equal(t, gobatcher.ImproperOrderError, err1)
-		} else if err2 != nil {
-			assert.Equal(t, gobatcher.ImproperOrderError, err2)
-		} else {
-			t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
-		}
-	})
 
 	t.Run("start announces starting capacity", func(t *testing.T) {
 		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
