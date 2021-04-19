@@ -415,13 +415,13 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 
 				// clear the partition after the lease
 				go func(i uint32) {
-					time.Sleep(leaseTime)
-					if ctx.Err() != nil {
-						return
+					select {
+					case <-ctx.Done():
+					case <-time.After(leaseTime):
+						r.clearPartitionId(i)
+						r.emit(ReleasedEvent, int(index), "", nil)
+						r.calc()
 					}
-					r.clearPartitionId(i)
-					r.emit(ReleasedEvent, int(index), "", nil)
-					r.calc()
 				}(index)
 
 				// mark the partition as allocated
