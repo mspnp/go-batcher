@@ -56,8 +56,6 @@ func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 		if err != nil {
 			return
 		}
-	} else {
-		credential = azblob.NewAnonymousCredential()
 	}
 
 	// NOTE: managed identity or AAD tokens could be used this way; tested

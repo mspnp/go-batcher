@@ -17,7 +17,6 @@ const (
 )
 
 type SharedResource interface {
-	Eventer
 	RateLimiter
 	WithFactor(val uint32) SharedResource
 	WithReservedCapacity(val uint32) SharedResource
@@ -42,8 +41,6 @@ type sharedResource struct {
 	// manage the phase
 	phaseMutex sync.Mutex
 	phase      int
-	shutdown   sync.WaitGroup
-	stop       chan struct{}
 	provision  chan struct{}
 
 	// capacity and target needs to be threadsafe and changes frequently
@@ -59,43 +56,10 @@ type sharedResource struct {
 // of an Azure Storage Account and container that the lease blobs can be created in. If multiple processes are sharing the same
 // capacity, they should all point to the same container. Commonly after calling NewSharedResource() you will chain some WithXXXX methods, for instance...
 // `NewSharedResource().WithMasterKey(key)`.
-func NewSharedResource(accountName, containerName string) SharedResource {
+func NewSharedResource() SharedResource {
 	res := &sharedResource{}
-	//mgr := newAzureBlobLeaseManager(res, accountName, containerName)
-	//res.leaseManager = mgr
 	return res
 }
-
-// This allows you to provide mocked objects for container and blob for unit tests.
-/*
-func (r *azureSharedResource) WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource {
-	r.phaseMutex.Lock()
-	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
-		panic(InitializationOnlyError)
-	}
-	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
-		ablm.withMocks(container, blob)
-	}
-	return r
-}
-*/
-
-// You must provide credentials for the AzureSharedResource to access the Azure Storage Account. Currently, the only supported method
-// is to provide a read/write key via WithMasterKey(). This method is required unless you calling WithMocks().
-/*
-func (r *azureSharedResource) WithMasterKey(val string) AzureSharedResource {
-	r.phaseMutex.Lock()
-	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
-		panic(InitializationOnlyError)
-	}
-	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
-		ablm.withMasterKey(val)
-	}
-	return r
-}
-*/
 
 // You may provide a factor that determines how much capacity each partition is worth. For instance, if you provision a Cosmos database
 // with 20k RU, you might use a factor of 1000, meaning 20 partitions would be created, each worth 1k RU. If not provided, the factor
@@ -330,6 +294,58 @@ func (r *sharedResource) provisionBlobs(ctx context.Context) {
 
 }
 
+func (r *sharedResource) loop(ctx context.Context) {
+	for {
+
+		// check for a stop
+		select {
+		case <-ctx.Done():
+			r.shutdown()
+			return
+		case <-r.provision:
+			r.provisionBlobs(ctx)
+			r.calc()
+		default:
+			// continue
+		}
+
+		// sleep for a bit before trying to obtain a new lease
+		interval := rand.Intn(int(r.maxInterval))
+		time.Sleep(time.Duration(interval) * time.Millisecond)
+
+		// see how many partitions are allocated and if there any that can be allocated
+		count, index, err := r.getAllocatedAndRandomUnallocatedPartition()
+		target := atomic.LoadUint32(&r.target)
+		if err == nil && count < target {
+
+			// attempt to allocate the partition
+			id := fmt.Sprint(uuid.New())
+			leaseTime := r.leaseManager.LeasePartition(ctx, id, index)
+			if leaseTime == 0 {
+				continue
+			}
+
+			// clear the partition after the lease
+			go func(i uint32) {
+				select {
+				case <-ctx.Done():
+				case <-time.After(leaseTime):
+					r.clearPartitionId(i)
+					r.Emit(ReleasedEvent, int(index), "", nil)
+					r.calc()
+				}
+			}(index)
+
+			// mark the partition as allocated
+			r.setPartitionId(index, id)
+			r.Emit(AllocatedEvent, int(index), "", nil)
+			r.calc()
+
+		}
+
+	}
+}
+
 // Call this method to start the processing loop. The processing loop runs on a random interval not to exceed MaxInterval and
 // attempts to obtain an exclusive lease on blob partitions to fulfill the capacity requests.
 func (r *sharedResource) Start(ctx context.Context) (err error) {
@@ -337,7 +353,7 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != rateLimiterPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		err = ImproperOrderError
 		return
 	}
@@ -350,110 +366,40 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 		r.maxInterval = 500 // default to 500ms
 	}
 
-	// prepare for shutdown
-	r.shutdown.Add(1)
-
 	// init flowcontrol chans
-	r.stop = make(chan struct{})
 	r.provision = make(chan struct{}, 1)
 
-	// if there is no shared capacity; there should be no event loop
-	if r.leaseManager == nil {
-		r.calc()
-		r.phase = rateLimiterPhaseStarted
-		return
-	}
-
-	// provision the container
-	if err = r.leaseManager.Provision(ctx); err != nil {
-		return
-	}
-	r.scheduleProvision()
-
-	// run the loop to try and allocate resources
-	go func() {
-
-		// shutdown
-		defer func() {
-			r.Emit(ShutdownEvent, 0, "", nil)
-			r.shutdown.Done()
-		}()
-
-	Loop:
-		for {
-
-			// check for a stop
-			select {
-			case <-r.stop:
-				return
-			case <-r.provision:
-				r.provisionBlobs(ctx)
-				r.calc()
-			default:
-				// continue
-			}
-
-			// sleep for a bit before trying to obtain a new lease
-			interval := rand.Intn(int(r.maxInterval))
-			time.Sleep(time.Duration(interval) * time.Millisecond)
-
-			// see how many partitions are allocated and if there any that can be allocated
-			count, index, err := r.getAllocatedAndRandomUnallocatedPartition()
-			target := atomic.LoadUint32(&r.target)
-			if err == nil && count < target {
-
-				// attempt to allocate the partition
-				id := fmt.Sprint(uuid.New())
-				leaseTime := r.leaseManager.LeasePartition(ctx, id, index)
-				if leaseTime == 0 {
-					continue Loop
-				}
-
-				// clear the partition after the lease
-				go func(i uint32) {
-					select {
-					case <-ctx.Done():
-					case <-time.After(leaseTime):
-						r.clearPartitionId(i)
-						r.Emit(ReleasedEvent, int(index), "", nil)
-						r.calc()
-					}
-				}(index)
-
-				// mark the partition as allocated
-				r.setPartitionId(index, id)
-				r.Emit(AllocatedEvent, int(index), "", nil)
-				r.calc()
-
-			}
-
+	// (provision, schedule, start-loop) or calc depending on whether there is a lease manager
+	if r.leaseManager != nil {
+		if err = r.leaseManager.Provision(ctx); err != nil {
+			return
 		}
-	}()
+		r.scheduleProvision()
+		go r.loop(ctx)
+	} else {
+		r.calc()
+		go func() {
+			<-ctx.Done()
+			r.shutdown()
+		}()
+	}
 
 	// update the phase
-	r.phase = rateLimiterPhaseStarted
+	r.phase = phaseStarted
 
 	return
 }
 
-// Call this method to stop the processing loop. You may not restart after stopping.
-func (r *sharedResource) Stop() {
+func (r *sharedResource) shutdown() {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase == rateLimiterPhaseStopped {
-		// NOTE: there should be no need for callers to handle errors at Stop(), we will just ignore them
-		return
-	}
-
-	// signal the stop
-	if r.stop != nil {
-		close(r.stop)
-	}
-	r.shutdown.Wait()
 
 	// update the phase
-	r.phase = rateLimiterPhaseStopped
+	r.phase = phaseStopped
+
+	// emit the shutdown event
+	r.Emit(ShutdownEvent, 0, "", nil)
 
 }

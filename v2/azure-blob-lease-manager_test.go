@@ -2,8 +2,12 @@ package batcher
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/google/uuid"
@@ -56,49 +60,6 @@ func (sr *mockEventer) Emit(event string, val int, msg string, metadata interfac
 	sr.Called(event, val, msg, metadata)
 }
 
-func TestAzureLeaseManager_Provision(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	e := &mockEventer{}
-	e.On("Emit", "created-container", mock.Anything, "https://accountName.blob.core.windows.net/containerName", mock.Anything).Once()
-	container := &mockContainer{}
-	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
-	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", container, nil)
-	mgr.Parent(e)
-	err := mgr.Provision(ctx)
-	assert.NoError(t, err, "expecting no provision error")
-	container.AssertExpectations(t)
-	e.AssertExpectations(t)
-}
-
-func TestAzureLeaseManager_ProvisionWithInvalidMasterKey(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "masterKey", nil, nil)
-	err := mgr.Provision(ctx)
-	assert.Contains(t, err.Error(), "illegal base64 data")
-}
-
-func TestAzureLeaseManager_CorrectNumberOfPartitionsCreated(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	e := &mockEventer{}
-	e.On("Emit", "created-blob", mock.Anything, mock.Anything, mock.Anything).Times(5)
-	blob := &mockBlob{}
-	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, nil).Times(5)
-	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "masterKey", nil, blob)
-	mgr.Parent(e)
-	mgr.CreatePartitions(ctx, 5)
-	blob.AssertExpectations(t)
-	e.AssertExpectations(t)
-}
-
-/*
-
-"github.com/Azure/azure-storage-blob-go/azblob"
-
-
 type StorageError struct {
 	serviceCode azblob.ServiceCodeType
 }
@@ -123,200 +84,193 @@ func (e StorageError) Response() *http.Response {
 	return nil
 }
 
-
-func TestAzureSRStart_ContainerCanBeCreated(t *testing.T) {
-	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-		WithMocks(getMocks()).
-		WithFactor(1000)
-	var created int
-	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-		switch event {
-		case "created-container":
-			created += 1
-		}
-	})
-	err := res.Start(context.Background())
-	assert.NoError(t, err, "not expecting a start error")
-	assert.Equal(t, 1, created, "expecting a single created event")
+func TestAzureLeaseManager_ProvisionWithCreated(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &mockEventer{}
+	e.On("Emit", CreatedContainerEvent, mock.Anything, "https://accountName.blob.core.windows.net/containerName", mock.Anything).Once()
+	container := &mockContainer{}
+	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", container, nil)
+	mgr.Parent(e)
+	err := mgr.Provision(ctx)
+	assert.NoError(t, err, "expecting no provision error")
+	container.AssertExpectations(t)
+	e.AssertExpectations(t)
 }
 
-func TestAzureSRStart_ContainerCanBeVerified(t *testing.T) {
+func TestAzureLeaseManager_ProvisionWithVerified(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &mockEventer{}
+	e.On("Emit", VerifiedContainerEvent, mock.Anything, "https://accountName.blob.core.windows.net/containerName", mock.Anything).Once()
+	container := &mockContainer{}
 	var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeContainerAlreadyExists}
-	container := new(containerURLMock)
-	container.On("Create", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, serr)
-	_, blob := getMocks()
-	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-		WithMocks(container, blob).
-		WithFactor(1000)
-	var verified int
-	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-		switch event {
-		case "verified-container":
-			verified += 1
-		}
-	})
-	err := res.Start(context.Background())
-	assert.NoError(t, err, "not expecting a start error")
-	assert.Equal(t, 1, verified, "expecting a single verified event")
+	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, serr).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", container, nil)
+	mgr.Parent(e)
+	err := mgr.Provision(ctx)
+	assert.NoError(t, err, "expecting no provision error")
+	container.AssertExpectations(t)
+	e.AssertExpectations(t)
 }
 
-func TestAzureSRStart_BlobCanBeCreated(t *testing.T) {
-	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-		WithMocks(getMocks()).
-		WithFactor(1000)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var created int
-	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-		switch event {
-		case gobatcher.CreatedBlobEvent:
-			created += 1
-		case gobatcher.ProvisionDoneEvent:
-			wg.Done()
-		}
-	})
-	err := res.Start(context.Background())
-	assert.NoError(t, err, "not expecting a start error")
-	wg.Wait()
-	assert.Equal(t, 10, created, "expecting a creation event per partition")
+func TestAzureLeaseManager_ProvisionWithUnrelatedStorageError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	container := &mockContainer{}
+	var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeAccountIsDisabled}
+	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, serr).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", container, nil)
+	err := mgr.Provision(ctx)
+	assert.Equal(t, serr, err)
+	container.AssertExpectations(t)
 }
 
-func TestAzureSRStart_BlobCanBeVerified(t *testing.T) {
+func TestAzureLeaseManager_ProvisionWithNonStorageError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	container := &mockContainer{}
+	serr := errors.New("non-storage error")
+	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, serr).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", container, nil)
+	err := mgr.Provision(ctx)
+	assert.Equal(t, serr, err)
+	container.AssertExpectations(t)
+}
+
+func TestAzureLeaseManager_ProvisionWithInvalidMasterKey(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "masterKey", nil, nil)
+	err := mgr.Provision(ctx)
+	assert.Contains(t, err.Error(), "illegal base64 data")
+}
+
+func TestAzureLeaseManager_ProvisionWithInvalidUrl(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := newMockAzureBlobLeaseManager("accoun\tName", "containerName", "", nil, nil)
+	err := mgr.Provision(ctx)
+	assert.Contains(t, err.Error(), "invalid control character in URL")
+}
+
+func TestAzureLeaseManager_CorrectNumberOfPartitionsCreated(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &mockEventer{}
+	e.On("Emit", CreatedBlobEvent, mock.Anything, mock.Anything, mock.Anything).Times(5)
+	blob := &mockBlob{}
+	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, nil).Times(5)
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+	mgr.Parent(e)
+	mgr.CreatePartitions(ctx, 5)
+	blob.AssertExpectations(t)
+	e.AssertExpectations(t)
+}
+
+func TestAzureLeaseManager_BlobCanBeVerified(t *testing.T) {
 	testCases := map[string]azblob.StorageError{
 		"exists": StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists},
 		"leased": StorageError{serviceCode: azblob.ServiceCodeLeaseIDMissing},
 	}
 	for testName, serr := range testCases {
 		t.Run(testName, func(t *testing.T) {
-			container, _ := getMocks()
-			blob := new(blockBlobURLMock)
-			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-				Return(nil, serr)
-			res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-				WithMocks(container, blob).
-				WithFactor(1000)
-			var wg sync.WaitGroup
-			wg.Add(1)
-			var verified int
-			res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-				switch event {
-				case gobatcher.VerifiedBlobEvent:
-					verified += 1
-				case gobatcher.ProvisionDoneEvent:
-					wg.Done()
-				}
-			})
-			err := res.Start(context.Background())
-			assert.NoError(t, err, "not expecting a start error")
-			wg.Wait()
-			assert.Equal(t, 10, verified, "expecting a verified event per partition")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			e := &mockEventer{}
+			e.On("Emit", VerifiedBlobEvent, mock.Anything, mock.Anything, mock.Anything).Once()
+			blob := &mockBlob{}
+			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, serr).Once()
+			mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+			mgr.Parent(e)
+			mgr.CreatePartitions(ctx, 1)
+			blob.AssertExpectations(t)
+			e.AssertExpectations(t)
 		})
 	}
 }
 
-*/
-
-/*
-func TestAzureSRStart(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("start can lease, fail, and handle errors", func(t *testing.T) {
-		serr := StorageError{serviceCode: azblob.ServiceCodeLeaseAlreadyPresent}
-		unknown := fmt.Errorf("unknown mocked error")
-		unrelated := StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists}
-		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, nil)
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, unknown).
-			Once()
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, serr).
-			Once()
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, unrelated).
-			Once()
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, nil).
-			Once()
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		var allocated, failed, errored uint32
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AllocatedEvent:
-				atomic.AddUint32(&allocated, 1)
-			case gobatcher.FailedEvent:
-				atomic.AddUint32(&failed, 1)
-			case gobatcher.ErrorEvent:
-				atomic.AddUint32(&errored, 1)
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(500)
-		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, uint32(1), atomic.LoadUint32(&allocated), "expecting 1 allocation")
-		assert.Equal(t, uint32(1), atomic.LoadUint32(&failed), "expecting 1 failed (already leased)")
-		assert.Equal(t, uint32(2), atomic.LoadUint32(&errored), "expecting 2 errors (unknown and unrelated)")
-	})
-*/
-
-/*
-func TestAzureSRStart_ContainerErrorsCascade(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func TestAzureLeaseManager_BlobWithErrors(t *testing.T) {
 	testCases := map[string]error{
-		"unknown error": fmt.Errorf("unknown mocked error"),
-		"storage error": StorageError{serviceCode: azblob.ServiceCodeAppendPositionConditionNotMet},
+		"unrelated":   StorageError{serviceCode: azblob.ServiceCodeAuthenticationFailed},
+		"non-storage": errors.New("non-storage error"),
 	}
 	for testName, serr := range testCases {
 		t.Run(testName, func(t *testing.T) {
-			mgr := &mockLeaseManager{}
-			mgr.On("Provision", mock.Anything).Return(serr).Once()
-			res := gobatcher.NewSharedResource("accountName", "containerName").
-				WithSharedCapacity(10000, mgr).
-				WithFactor(1000)
-			err := res.Start(ctx)
-			assert.Equal(t, serr, err, "expecting the error to be thrown back from start")
-			mgr.AssertExpectations(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			e := &mockEventer{}
+			e.On("Emit", ErrorEvent, mock.Anything, mock.Anything, serr).Once()
+			blob := &mockBlob{}
+			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, serr).Once()
+			mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+			mgr.Parent(e)
+			mgr.CreatePartitions(ctx, 1)
+			blob.AssertExpectations(t)
+			e.AssertExpectations(t)
 		})
 	}
 }
 
-func TestAzureSRStart_BlobErrorsCascade(t *testing.T) {
+func TestAzureLeaseManager_LeaseSuccess(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	testCases := map[string]error{
-		"unknown error": fmt.Errorf("unknown mocked error"),
-		"storage error": StorageError{serviceCode: azblob.ServiceCodeBlobArchived},
-	}
-	for testName, serr := range testCases {
-		t.Run(testName, func(t *testing.T) {
-			mgr := &mockLeaseManager{}
-			mgr.On("Provision", mock.Anything).Return(nil).Once()
-			mgr.On("CreatePartitions", mock.Anything, 10).Return(serr).Once()
-			res := gobatcher.NewSharedResource("accountName", "containerName").
-				WithSharedCapacity(10000, mgr).
-				WithFactor(1000)
-			var wg sync.WaitGroup
-			wg.Add(1)
-			res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-				switch event {
-				case gobatcher.ErrorEvent:
-					assert.Equal(t, serr, metadata)
-					wg.Done()
-				}
-			})
-			err := res.Start(ctx)
-			assert.NoError(t, err, "not expecting a start error")
-			wg.Wait()
-			mgr.AssertExpectations(t)
-		})
-	}
+	blob := &mockBlob{}
+	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+	dur := mgr.LeasePartition(ctx, "my-lease-id", 0)
+	assert.Equal(t, 15*time.Second, dur)
+	blob.AssertExpectations(t)
 }
-*/
+
+func TestAzureLeaseManager_LeaseFailed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &mockEventer{}
+	e.On("Emit", FailedEvent, mock.Anything, mock.Anything, mock.Anything).Once()
+	blob := &mockBlob{}
+	serr := StorageError{serviceCode: azblob.ServiceCodeLeaseAlreadyPresent}
+	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, serr).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+	mgr.Parent(e)
+	dur := mgr.LeasePartition(ctx, "my-lease-id", 0)
+	assert.Equal(t, 0*time.Second, dur)
+	blob.AssertExpectations(t)
+	e.AssertExpectations(t)
+}
+
+func TestAzureLeaseManager_LeaseError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &mockEventer{}
+	e.On("Emit", ErrorEvent, mock.Anything, mock.Anything, mock.Anything).Once()
+	blob := &mockBlob{}
+	unknownErr := fmt.Errorf("unknown mocked error")
+	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, unknownErr).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+	mgr.Parent(e)
+	dur := mgr.LeasePartition(ctx, "my-lease-id", 0)
+	assert.Equal(t, 0*time.Second, dur)
+	blob.AssertExpectations(t)
+	e.AssertExpectations(t)
+}
+
+func TestAzureLeaseManager_LeaseUnrelatedError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &mockEventer{}
+	e.On("Emit", ErrorEvent, mock.Anything, mock.Anything, mock.Anything).Once()
+	blob := &mockBlob{}
+	unrelatedErr := StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists}
+	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, unrelatedErr).Once()
+	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "", nil, blob)
+	mgr.Parent(e)
+	dur := mgr.LeasePartition(ctx, "my-lease-id", 0)
+	assert.Equal(t, 0*time.Second, dur)
+	blob.AssertExpectations(t)
+	e.AssertExpectations(t)
+}

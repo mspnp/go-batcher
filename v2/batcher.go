@@ -1,6 +1,7 @@
 package batcher
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -31,8 +32,7 @@ type Batcher interface {
 	Inflight() uint32
 	OperationsInBuffer() uint32
 	NeedsCapacity() uint32
-	Start() (err error)
-	Stop()
+	Start(ctx context.Context) (err error)
 }
 
 type batcher struct {
@@ -61,8 +61,6 @@ type batcher struct {
 	// manage the phase
 	phaseMutex sync.Mutex
 	phase      int
-	shutdown   sync.WaitGroup
-	stop       chan bool
 
 	// target needs to be threadsafe and changes frequently
 	targetMutex sync.RWMutex
@@ -428,19 +426,13 @@ func (r *batcher) processBatch(watcher Watcher, batch []Operation) {
 
 // Call this method to start the processing loop. The processing loop requests capacity at the CapacityInterval, organizes operations into
 // batches at the FlushInterval, and audits the capacity target at the AuditInterval.
-func (r *batcher) Start() (err error) {
+func (r *batcher) Start(ctx context.Context) (err error) {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
 	if r.phase != phaseUninitialized {
 		err = ImproperOrderError
-		return
-	}
-
-	// ensure buffer was provisioned
-	if r.buffer == nil || r.buffer.max() == 0 {
-		err = BufferNotAllocated
 		return
 	}
 
@@ -452,29 +444,23 @@ func (r *batcher) Start() (err error) {
 	flushTimer := time.NewTicker(r.flushInterval)
 	auditTimer := time.NewTicker(r.auditInterval)
 
-	// prepare for shutdown
-	r.shutdown.Add(1)
-	r.stop = make(chan bool)
-
 	// process
 	go func() {
 
 		// shutdown
 		defer func() {
-			capacityTimer.Stop()
-			flushTimer.Stop()
-			auditTimer.Stop()
-			r.buffer.clear()
-			r.Emit(ShutdownEvent, 0, "", nil)
-			r.shutdown.Done()
 		}()
 
 		// loop
 		for {
 			select {
 
-			case <-r.stop:
-				// no more writes; abort
+			case <-ctx.Done():
+				// shutdown when context is cancelled
+				capacityTimer.Stop()
+				flushTimer.Stop()
+				auditTimer.Stop()
+				r.shutdown()
 				return
 
 			case <-r.pause:
@@ -598,24 +584,19 @@ func (r *batcher) Start() (err error) {
 	return
 }
 
-// Call this method to stop the processing loop. You may not restart after stopping.
-func (r *batcher) Stop() {
+func (r *batcher) shutdown() {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase == phaseStopped {
-		// NOTE: there should be no need for callers to handle errors at Stop(), we will just ignore them
-		return
-	}
 
-	// signal the stop
-	if r.stop != nil {
-		close(r.stop)
-	}
-	r.shutdown.Wait()
+	// clear the buffer
+	r.buffer.clear()
 
 	// update the phase
 	r.phase = phaseStopped
+
+	// emit the shutdown event
+	r.Emit(ShutdownEvent, 0, "", nil)
 
 }
