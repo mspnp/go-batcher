@@ -68,8 +68,9 @@ func main() {
 	AZBLOB_CONTAINER := goconfig.AsString().TrySetByEnv("AZBLOB_CONTAINER").Print().Require().Value()
 
 	// start getting shared resource capacity
-	azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
-		WithMasterKey(AZBLOB_KEY).
+	leaseMgr := gobatcher.NewAzureBlobLeaseManager(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, AZBLOB_KEY)
+	azresource := gobatcher.NewSharedResource().
+		WithSharedCapacity(uint32(CAPACITY), leaseMgr).
 		WithFactor(1000)
 	resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
@@ -126,7 +127,7 @@ func main() {
 	defer batcher.RemoveListener(batcherListener)
 
 	// start the batcher
-	err := batcher.Start()
+	err := batcher.Start(ctx)
 	if err != nil {
 		panic(err)
 	}
