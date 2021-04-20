@@ -14,6 +14,7 @@
 - [Usage](#usage)
   - [Batcher Configuration](#batcher-configuration)
   - [Events](#events)
+  - [Unit Testing](#unit-testing)
 - [Rate limiting](#rate-limiting)
   - [Scenarios](#scenarios)
   - [Cost savings](#cost-savings)
@@ -238,6 +239,10 @@ All configuration options are documented in the [Batcher Configuration docs](doc
 ### Events
 
 Events are raised with a "name" (string), "val" (int), "msg" (string), and "metadata" (interface{}). Some of the events that can be raised by Batcher are `shutdown` or `pause`, while the rate limiters can raise events like `capacity` to indicate capacity changes. The complete list of events is documented in the [Batcher Events docs](docs/events.md).
+
+### Unit Testing
+
+There are several ways to facilitate unit testing when using Batcher. Detailed documentation is available in the [Unit Testing docs](./docs/unit-testing.md).
 
 ## Rate Limiting
 
