@@ -2,94 +2,23 @@ package batcher_test
 
 import (
 	"context"
-	"fmt"
-	"net/http"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Azure/azure-storage-blob-go/azblob"
 	gobatcher "github.com/plasne/go-batcher/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-/*
-type blockBlobURLMock struct {
-	mock.Mock
-}
-
-func (b *blockBlobURLMock) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap, clientKeyOpts azblob.ClientProvidedKeyOptions) (*azblob.BlockBlobUploadResponse, error) {
-	args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags, clientKeyOpts)
-	return nil, args.Error(1)
-}
-
-func (b *blockBlobURLMock) AcquireLease(ctx context.Context, proposedId string, duration int32, conditions azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error) {
-	args := b.Called(ctx, proposedId, duration, conditions)
-	return nil, args.Error(1)
-}
-
-type containerURLMock struct {
-	mock.Mock
-}
-
-func (c *containerURLMock) Create(ctx context.Context, metadata azblob.Metadata, publicAccessType azblob.PublicAccessType) (*azblob.ContainerCreateResponse, error) {
-	args := c.Called(ctx, metadata, publicAccessType)
-	return nil, args.Error(1)
-}
-
-func (c *containerURLMock) NewBlockBlobURL(url string) azblob.BlockBlobURL {
-	_ = c.Called(url)
-	return azblob.BlockBlobURL{}
-}
-*/
-
-type StorageError struct {
-	serviceCode azblob.ServiceCodeType
-}
-
-func (e StorageError) ServiceCode() azblob.ServiceCodeType {
-	return e.serviceCode
-}
-
-func (e StorageError) Error() string {
-	return "this is a mock error"
-}
-
-func (e StorageError) Timeout() bool {
-	return false
-}
-
-func (e StorageError) Temporary() bool {
-	return false
-}
-
-func (e StorageError) Response() *http.Response {
-	return nil
-}
-
-/*
-func getMocks() (*containerURLMock, *blockBlobURLMock) {
-
-	// build container
-	container := new(containerURLMock)
-	container.On("Create", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, nil)
-
-	// build blob
-	blob := new(blockBlobURLMock)
-	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, nil)
-	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, nil)
-
-	return container, blob
-}
-*/
-
 type mockLeaseManager struct {
 	mock.Mock
+}
+
+func (mgr *mockLeaseManager) Parent(sr gobatcher.Eventer) {
+	mgr.Called(sr)
 }
 
 func (mgr *mockLeaseManager) Provision(ctx context.Context) (err error) {
@@ -97,9 +26,8 @@ func (mgr *mockLeaseManager) Provision(ctx context.Context) (err error) {
 	return args.Error(0)
 }
 
-func (mgr *mockLeaseManager) CreatePartitions(ctx context.Context, count int) (err error) {
-	args := mgr.Called(ctx, count)
-	return args.Error(0)
+func (mgr *mockLeaseManager) CreatePartitions(ctx context.Context, count int) {
+	mgr.Called(ctx, count)
 }
 
 func (mgr *mockLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
@@ -111,8 +39,9 @@ func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10, mgr)
 	var wg sync.WaitGroup
@@ -134,6 +63,7 @@ func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 500).Return(nil).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
@@ -160,8 +90,9 @@ func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 11).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 11).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10050, mgr).
 		WithFactor(1000)
@@ -180,82 +111,38 @@ func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestAzureSRStart_ContainerErrorsCascade(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	testCases := map[string]error{
-		"unknown error": fmt.Errorf("unknown mocked error"),
-		"storage error": StorageError{serviceCode: azblob.ServiceCodeAppendPositionConditionNotMet},
-	}
-	for testName, serr := range testCases {
-		t.Run(testName, func(t *testing.T) {
-			mgr := &mockLeaseManager{}
-			mgr.On("Provision", mock.Anything).Return(serr).Once()
-			res := gobatcher.NewSharedResource("accountName", "containerName").
-				WithSharedCapacity(10000, mgr).
-				WithFactor(1000)
-			err := res.Start(ctx)
-			assert.Equal(t, serr, err, "expecting the error to be thrown back from start")
-			mgr.AssertExpectations(t)
-		})
-	}
-}
-
-func TestAzureSRStart_BlobErrorsCascade(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	testCases := map[string]error{
-		"unknown error": fmt.Errorf("unknown mocked error"),
-		"storage error": StorageError{serviceCode: azblob.ServiceCodeBlobArchived},
-	}
-	for testName, serr := range testCases {
-		t.Run(testName, func(t *testing.T) {
-			mgr := &mockLeaseManager{}
-			mgr.On("Provision", mock.Anything).Return(nil).Once()
-			mgr.On("CreatePartitions", mock.Anything, 10).Return(serr).Once()
-			res := gobatcher.NewSharedResource("accountName", "containerName").
-				WithSharedCapacity(10000, mgr).
-				WithFactor(1000)
-			var wg sync.WaitGroup
-			wg.Add(1)
-			res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-				switch event {
-				case gobatcher.ErrorEvent:
-					assert.Equal(t, serr, metadata)
-					wg.Done()
-				}
-			})
-			err := res.Start(ctx)
-			assert.NoError(t, err, "not expecting a start error")
-			wg.Wait()
-			mgr.AssertExpectations(t)
-		})
-	}
-}
-
 func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
+	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(2000).
-		WithSharedCapacity(10000, nil).
+		WithSharedCapacity(10000, mgr).
 		WithFactor(1000)
 	max := res.MaxCapacity()
 	assert.Equal(t, uint32(12000), max)
+	mgr.AssertExpectations(t)
 }
 
 func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
+	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(2000).
-		WithSharedCapacity(10000, nil).
+		WithSharedCapacity(10000, mgr).
 		WithFactor(1)
 	max := res.MaxCapacity()
 	assert.Equal(t, uint32(2500), max)
+	mgr.AssertExpectations(t)
 }
 
 func TestCapacityIsEqualToReservedWhenThereIsNoRequestForCapacity(t *testing.T) {
+	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(2000).
-		WithSharedCapacity(10000, nil)
+		WithSharedCapacity(10000, mgr)
 	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity equal to reserved only because there was no GiveMe()")
+	mgr.AssertExpectations(t)
 }
 
 func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
@@ -263,8 +150,9 @@ func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Once()
 
 	res := gobatcher.NewSharedResource("accountName", "containerName").
@@ -302,8 +190,9 @@ func TestGiveMeGrantsCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(4)
 
 	res := gobatcher.NewSharedResource("accountName", "containerName").
@@ -340,8 +229,9 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(2000).
@@ -378,8 +268,9 @@ func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithReservedCapacity(2000).
@@ -416,8 +307,9 @@ func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 13).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 13).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(3)
 
 	res := gobatcher.NewSharedResource("accountName", "containerName").
@@ -445,44 +337,6 @@ func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
 	res.GiveMe(1800)
 	wg.Wait()
 	assert.Equal(t, uint32(2331), res.Capacity(), "expecting the capacity to reflect 3 partitions")
-
-	mgr.AssertExpectations(t)
-}
-
-func TestGiveMeDoesNotGrantAboveCapacity(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	mgr := &mockLeaseManager{}
-	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
-	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
-	res := gobatcher.NewSharedResource("accountName", "containerName").
-		WithReservedCapacity(2000).
-		WithSharedCapacity(10000, mgr).
-		WithFactor(1000).
-		WithMaxInterval(1)
-	var wg sync.WaitGroup
-	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-		switch event {
-		case gobatcher.CapacityEvent:
-			wg.Done()
-		case gobatcher.TargetEvent:
-			assert.Equal(t, 11000, val, "expecting 11000 additional capacity is needed")
-			wg.Done()
-		}
-	})
-
-	wg.Add(1)
-	err := res.Start(ctx)
-	assert.NoError(t, err, "not expecting a start error")
-	wg.Wait()
-	assert.Equal(t, uint32(2000), res.Capacity(), "expecting capacity to equal reserved since there is no GiveMe() yet")
-
-	wg.Add(11)
-	res.GiveMe(13000)
-	wg.Wait()
-	assert.Equal(t, uint32(12000), res.Capacity(), "expecting the capacity to be at the maximum of 12000 instead of the requested 13000")
 
 	mgr.AssertExpectations(t)
 }
@@ -534,10 +388,10 @@ func TestSRCannotBeStartedMoreThanOnce(t *testing.T) {
 func TestAzureSRStartAnnouncesStartingCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 1).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 1).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(1000, mgr).
 		WithFactor(1000).
@@ -558,95 +412,116 @@ func TestAzureSRStartAnnouncesStartingCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-// TODO: Review - long test
 func TestAzureSRStartCanLeaseAndReleasePartitions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
-	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(2)
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(100 * time.Millisecond).Times(2)
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
-		WithFactor(1000)
+		WithFactor(1000).
+		WithMaxInterval(1)
+
+	var wg sync.WaitGroup
 	var allocated, released uint32
 	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
 		case gobatcher.AllocatedEvent:
 			atomic.AddUint32(&allocated, 1)
+			wg.Done()
 		case gobatcher.ReleasedEvent:
 			atomic.AddUint32(&released, 1)
+			wg.Done()
 		}
 	})
+
+	wg.Add(2)
 	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
 	res.GiveMe(1800)
-	time.Sleep(2 * time.Second)
+	wg.Wait()
+
+	wg.Add(2)
 	res.GiveMe(0)
-	time.Sleep(15 * time.Second)
+	wg.Wait()
+
 	assert.Equal(t, uint32(2), atomic.LoadUint32(&allocated), "expecting 2 allocations to meet capacity requirement")
 	assert.Equal(t, uint32(2), atomic.LoadUint32(&released), "expecting 2 releases because more than 15 seconds have passed")
+	mgr.AssertExpectations(t)
+}
+
+func TestZeroDurationLeasesDoNotAllocateOrRelease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("Provision", mock.Anything).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
+	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(0 * time.Millisecond) // called at least once
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000)
+
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.AllocatedEvent:
+			assert.FailNow(t, "allocation was not expected")
+		case gobatcher.ReleasedEvent:
+			assert.FailNow(t, "released was not expected")
+		}
+	})
+
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	res.GiveMe(2000)
+	time.Sleep(1 * time.Second)
 
 	mgr.AssertExpectations(t)
 }
 
-/*
-func TestAzureSRStart(t *testing.T) {
-	ctx := context.Background()
+func TestAzureSRProvisionReturnsErr(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	t.Run("start can lease, fail, and handle errors", func(t *testing.T) {
-		serr := StorageError{serviceCode: azblob.ServiceCodeLeaseAlreadyPresent}
-		unknown := fmt.Errorf("unknown mocked error")
-		unrelated := StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists}
-		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, nil)
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, unknown).
-			Once()
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, serr).
-			Once()
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, unrelated).
-			Once()
-		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, nil).
-			Once()
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(container, blob).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		var allocated, failed, errored uint32
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AllocatedEvent:
-				atomic.AddUint32(&allocated, 1)
-			case gobatcher.FailedEvent:
-				atomic.AddUint32(&failed, 1)
-			case gobatcher.ErrorEvent:
-				atomic.AddUint32(&errored, 1)
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.GiveMe(500)
-		time.Sleep(10 * time.Millisecond)
-		assert.Equal(t, uint32(1), atomic.LoadUint32(&allocated), "expecting 1 allocation")
-		assert.Equal(t, uint32(1), atomic.LoadUint32(&failed), "expecting 1 failed (already leased)")
-		assert.Equal(t, uint32(2), atomic.LoadUint32(&errored), "expecting 2 errors (unknown and unrelated)")
+	mgr := &mockLeaseManager{}
+	provErr := errors.New("provision error")
+	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("Provision", mock.Anything).Return(provErr).Once()
+	res := gobatcher.NewSharedResource("accountName", "containerName").
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000)
+
+	var wg sync.WaitGroup
+	var allocated, released uint32
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ProvisionDoneEvent:
+			atomic.AddUint32(&allocated, 1)
+			wg.Done()
+		case gobatcher.ReleasedEvent:
+			atomic.AddUint32(&released, 1)
+			wg.Done()
+		}
 	})
-*/
+
+	err := res.Start(ctx)
+	assert.Equal(t, provErr, err)
+	mgr.AssertExpectations(t)
+}
 
 func TestAzureSRStartOnlyAllocatesToMaxCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
@@ -661,64 +536,14 @@ func TestAzureSRStartOnlyAllocatesToMaxCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-/*
-func TestAzureSRStop(t *testing.T) {
-	ctx := context.Background()
-
-		t.Run("stop emits shutdown", func(t *testing.T) {
-		res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-			WithMocks(getMocks()).
-			WithFactor(1000).
-			WithMaxInterval(1)
-		done := make(chan bool)
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.ShutdownEvent:
-				close(done)
-			}
-		})
-		err := res.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		res.Stop()
-		select {
-		case <-done:
-			// success
-		case <-time.After(1 * time.Second):
-			// timeout
-			assert.Fail(t, "expected shutdown but didn't see one even after 1 second")
-		}
-	})
-
-t.Run("stop before start does not shutdown", func(t *testing.T) {
-	res := gobatcher.NewSharedResource("accountName", "containerName", 10000).
-		WithMocks(getMocks()).
-		WithFactor(1000).
-		WithMaxInterval(1)
-	done := make(chan bool)
-	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-		switch event {
-		case gobatcher.ShutdownEvent:
-			close(done)
-		}
-	})
-	res.Stop()
-	select {
-	case <-done:
-		// success
-		assert.Fail(t, "expected no shutdown")
-	case <-time.After(1 * time.Second):
-		// timeout; no shutdown as expected
-	}
-})
-*/
-
 func TestAzureSRMultipleStopShutdownOnlyOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
 		WithFactor(1000).
@@ -749,13 +574,15 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
 		WithFactor(1000).
 		WithMaxInterval(1)
+
 	var wg sync.WaitGroup
 	var count uint32
 	id := res.AddListener(func(event string, val int, msg string, metadata interface{}) {
@@ -765,6 +592,7 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 			wg.Done()
 		}
 	})
+
 	wg.Add(1)
 	err := res.Start(ctx)
 	assert.NoError(t, err, "not expecting a start error")
@@ -772,6 +600,7 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 	var start uint32
 	atomic.AddUint32(&start, atomic.LoadUint32(&count))
 	res.RemoveListener(id)
+
 	res.GiveMe(10000)
 	time.Sleep(100 * time.Millisecond)
 	assert.Greater(t, atomic.LoadUint32(&start), uint32(0), "expecting there to be some initial events")
@@ -785,9 +614,10 @@ func TestSetSharedCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 20).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
+	mgr.On("CreatePartitions", mock.Anything, 20).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
 		WithFactor(1000)
@@ -824,8 +654,9 @@ func TestSetReservedCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
 		WithFactor(1000)
@@ -858,10 +689,11 @@ func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(5)
-	mgr.On("CreatePartitions", mock.Anything, 12).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 12).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
 		WithFactor(1000).
@@ -904,9 +736,10 @@ func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 10).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 0).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 10).Once()
+	mgr.On("CreatePartitions", mock.Anything, 0).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(100 * time.Millisecond).Times(5)
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(10000, mgr).
@@ -956,10 +789,11 @@ func TestStartingWithZeroSharedCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
+	mgr.On("Parent", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
-	mgr.On("CreatePartitions", mock.Anything, 0).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 0).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Once()
-	mgr.On("CreatePartitions", mock.Anything, 1).Return(nil).Once()
+	mgr.On("CreatePartitions", mock.Anything, 1).Once()
 	res := gobatcher.NewSharedResource("accountName", "containerName").
 		WithSharedCapacity(0, mgr).
 		WithFactor(1000)

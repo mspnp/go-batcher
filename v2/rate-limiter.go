@@ -9,6 +9,7 @@ const (
 )
 
 type RateLimiter interface {
+	Eventer
 	MaxCapacity() uint32
 	Capacity() uint32
 	GiveMe(target uint32)

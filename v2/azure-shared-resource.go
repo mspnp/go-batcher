@@ -17,21 +17,18 @@ const (
 )
 
 type SharedResource interface {
-	ieventer
+	Eventer
 	RateLimiter
-	//WithMocks(container AzureContainer, blob AzureBlob) AzureSharedResource
-	//WithMasterKey(val string) AzureSharedResource
 	WithFactor(val uint32) SharedResource
 	WithReservedCapacity(val uint32) SharedResource
 	WithSharedCapacity(val uint32, mgr LeaseManager) SharedResource
 	WithMaxInterval(val uint32) SharedResource
-	//WithLeaseTime(val uint32) AzureSharedResource
 	SetReservedCapacity(capacity uint32)
 	SetSharedCapacity(capacity uint32) error
 }
 
 type sharedResource struct {
-	eventer
+	EventerBase
 
 	// configuration items that should not change after Provision()
 	factor           uint32
@@ -106,7 +103,7 @@ func (r *azureSharedResource) WithMasterKey(val string) AzureSharedResource {
 func (r *sharedResource) WithFactor(val uint32) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.factor = val
@@ -121,7 +118,7 @@ func (r *sharedResource) WithFactor(val uint32) SharedResource {
 func (r *sharedResource) WithReservedCapacity(val uint32) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	atomic.StoreUint32(&r.reservedCapacity, val)
@@ -134,10 +131,11 @@ func (r *sharedResource) WithReservedCapacity(val uint32) SharedResource {
 func (r *sharedResource) WithSharedCapacity(val uint32, mgr LeaseManager) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	atomic.StoreUint32(&r.sharedCapacity, val)
+	mgr.Parent(r)
 	r.leaseManager = mgr
 	return r
 }
@@ -148,7 +146,7 @@ func (r *sharedResource) WithSharedCapacity(val uint32, mgr LeaseManager) Shared
 func (r *sharedResource) WithMaxInterval(val uint32) SharedResource {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.maxInterval = val
@@ -208,7 +206,7 @@ func (r *sharedResource) calc() {
 	atomic.StoreUint32(&r.capacity, total)
 
 	// emit the capacity change
-	r.emit(CapacityEvent, int(r.Capacity()), "", nil)
+	r.Emit(CapacityEvent, int(r.Capacity()), "", nil)
 
 }
 
@@ -230,7 +228,7 @@ func (r *sharedResource) GiveMe(target uint32) {
 	actual := math.Ceil(float64(target) / float64(r.factor))
 
 	// raise event
-	r.emit(TargetEvent, int(target), "", nil)
+	r.Emit(TargetEvent, int(target), "", nil)
 
 	// store
 	atomic.StoreUint32(&r.target, uint32(actual))
@@ -312,7 +310,7 @@ func (r *sharedResource) provisionBlobs(ctx context.Context) {
 	sharedCapacity := atomic.LoadUint32(&r.sharedCapacity)
 	count := int(math.Ceil(float64(sharedCapacity) / float64(r.factor)))
 	if count > maxPartitions {
-		r.emit(ErrorEvent, count, "only 500 partitions were created as this is the max supported", nil)
+		r.Emit(ErrorEvent, count, "only 500 partitions were created as this is the max supported", nil)
 		count = maxPartitions
 	}
 
@@ -322,15 +320,13 @@ func (r *sharedResource) provisionBlobs(ctx context.Context) {
 	r.partitions = partitions
 
 	// emit start
-	r.emit(ProvisionStartEvent, count, "start blob provisioning", nil)
+	r.Emit(ProvisionStartEvent, count, "start blob provisioning", nil)
 
 	// provision partitions
-	if err := r.leaseManager.CreatePartitions(ctx, count); err != nil {
-		r.emit(ErrorEvent, 0, "creating partitions raised an error", err)
-	}
+	r.leaseManager.CreatePartitions(ctx, count)
 
 	// emit done
-	r.emit(ProvisionDoneEvent, count, "blob provisioning done", nil)
+	r.Emit(ProvisionDoneEvent, count, "blob provisioning done", nil)
 
 }
 
@@ -379,7 +375,7 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 
 		// shutdown
 		defer func() {
-			r.emit(ShutdownEvent, 0, "", nil)
+			r.Emit(ShutdownEvent, 0, "", nil)
 			r.shutdown.Done()
 		}()
 
@@ -419,14 +415,14 @@ func (r *sharedResource) Start(ctx context.Context) (err error) {
 					case <-ctx.Done():
 					case <-time.After(leaseTime):
 						r.clearPartitionId(i)
-						r.emit(ReleasedEvent, int(index), "", nil)
+						r.Emit(ReleasedEvent, int(index), "", nil)
 						r.calc()
 					}
 				}(index)
 
 				// mark the partition as allocated
 				r.setPartitionId(index, id)
-				r.emit(AllocatedEvent, int(index), "", nil)
+				r.Emit(AllocatedEvent, int(index), "", nil)
 				r.calc()
 
 			}

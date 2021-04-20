@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	gobatcher "github.com/plasne/go-batcher/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -62,9 +63,11 @@ func TestEnqueue(t *testing.T) {
 	})
 
 	t.Run("operations cannot exceed max capacity (shared)", func(t *testing.T) {
+		mgr := &mockLeaseManager{}
+		mgr.On("Parent", mock.Anything).Once()
 		res := gobatcher.NewSharedResource("accountName", "containerName").
 			WithReservedCapacity(2000).
-			WithSharedCapacity(10000, nil).
+			WithSharedCapacity(10000, mgr).
 			WithFactor(1000)
 		batcher := gobatcher.NewBatcher().
 			WithRateLimiter(res)
@@ -80,6 +83,7 @@ func TestEnqueue(t *testing.T) {
 			_ = err.Error() // improves code coverage
 		}
 		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
+		mgr.AssertExpectations(t)
 	})
 
 	t.Run("operations cannot be attempted more than x times", func(t *testing.T) {
@@ -323,8 +327,10 @@ func TestNeedsCapacity(t *testing.T) {
 	})
 
 	t.Run("ensure operation costs result in target", func(t *testing.T) {
+		mgr := &mockLeaseManager{}
+		mgr.On("Parent", mock.Anything).Once()
 		res := gobatcher.NewSharedResource("accountName", "containerName").
-			WithSharedCapacity(10000, nil).
+			WithSharedCapacity(10000, mgr).
 			WithFactor(1000)
 		batcher := gobatcher.NewBatcher().
 			WithRateLimiter(res).
@@ -357,6 +363,7 @@ func TestNeedsCapacity(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
+		mgr.AssertExpectations(t)
 	})
 
 }
@@ -716,8 +723,10 @@ func TestTimers(t *testing.T) {
 	for _, d := range capacityIntervalTests {
 		testName := fmt.Sprintf("ensure capacity requests are raised every %v", d.id)
 		t.Run(testName, func(t *testing.T) {
+			mgr := &mockLeaseManager{}
+			mgr.On("Parent", mock.Anything).Once()
 			res := gobatcher.NewSharedResource("accountName", "containerName").
-				WithSharedCapacity(10000, nil).
+				WithSharedCapacity(10000, mgr).
 				WithFactor(1000)
 			batcher := gobatcher.NewBatcher().
 				WithRateLimiter(res).
@@ -738,6 +747,7 @@ func TestTimers(t *testing.T) {
 			assert.NoError(t, err, "not expecting a start error")
 			time.Sleep(d.wait)
 			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v capacity requests given the %v interval and capacity for only a single operation", d.interval, d.expect)
+			mgr.AssertExpectations(t)
 		})
 	}
 

@@ -6,13 +6,13 @@ import (
 )
 
 type ProvisionedResource interface {
-	ieventer
+	Eventer
 	RateLimiter
 	SetReservedCapacity(capacity uint32)
 }
 
 type provisionedResource struct {
-	eventer
+	EventerBase
 	maxCapacity uint32
 }
 
@@ -39,7 +39,7 @@ func (r *provisionedResource) Capacity() uint32 {
 // This allows you to set the ReservedCapacity to a different value after the RateLimiter has started.
 func (r *provisionedResource) SetReservedCapacity(capacity uint32) {
 	atomic.StoreUint32(&r.maxCapacity, capacity)
-	r.emit(CapacityEvent, int(capacity), "", nil)
+	r.Emit(CapacityEvent, int(capacity), "", nil)
 }
 
 // You should call GiveMe() to update the capacity you are requesting. You will always specify the new amount of capacity you require.
@@ -52,11 +52,11 @@ func (r *provisionedResource) GiveMe(target uint32) {
 
 // Call this method to emit the starting capacity. There is no processing loop for this rate limiter.
 func (r *provisionedResource) Start(ctx context.Context) error {
-	r.emit(CapacityEvent, int(r.MaxCapacity()), "", nil)
+	r.Emit(CapacityEvent, int(r.MaxCapacity()), "", nil)
 	return nil
 }
 
 // Call this method to stop the processing loop. You may not restart after stopping.
 func (r *provisionedResource) Stop() {
-	r.emit(ShutdownEvent, 0, "", nil)
+	r.Emit(ShutdownEvent, 0, "", nil)
 }

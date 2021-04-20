@@ -11,38 +11,40 @@ import (
 )
 
 type azureBlobLeaseManager struct {
-	repeater
 
 	// configuration items that should not change after Provision()
+	parent        Eventer
 	accountName   *string
 	masterKey     *string
 	containerName *string
 
 	// internal properties
-	container  AzureContainer
-	blob       AzureBlob
-	mocksInUse bool
+	container AzureContainer
+	blob      AzureBlob
 }
 
-func NewAzureBlobLeaseManager(parent ieventer, accountName, containerName string) LeaseManager {
+func NewAzureBlobLeaseManager(accountName, containerName, masterKey string) LeaseManager {
 	mgr := &azureBlobLeaseManager{
 		accountName:   &accountName,
 		containerName: &containerName,
+		masterKey:     &masterKey,
 	}
-	mgr.parent = parent
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) WithMocks(container AzureContainer, blob AzureBlob) LeaseManager {
-	m.container = container
-	m.blob = blob
-	m.mocksInUse = true
-	return m
+func newMockAzureBlobLeaseManager(accountName, containerName, masterKey string, container AzureContainer, blob AzureBlob) LeaseManager {
+	mgr := &azureBlobLeaseManager{
+		accountName:   &accountName,
+		containerName: &containerName,
+		masterKey:     &masterKey,
+		container:     container,
+		blob:          blob,
+	}
+	return mgr
 }
 
-func (m *azureBlobLeaseManager) WithMasterKey(val string) LeaseManager {
-	m.masterKey = &val
-	return m
+func (m *azureBlobLeaseManager) Parent(e Eventer) {
+	m.parent = e
 }
 
 func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
@@ -81,7 +83,7 @@ func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeContainerAlreadyExists:
 				err = nil // this is a legit condition
-				m.emit(VerifiedContainerEvent, 0, ref, nil)
+				m.parent.Emit(VerifiedContainerEvent, 0, ref, nil)
 			default:
 				return
 			}
@@ -89,13 +91,13 @@ func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 			return
 		}
 	} else {
-		m.emit(CreatedContainerEvent, 0, ref, nil)
+		m.parent.Emit(CreatedContainerEvent, 0, ref, nil)
 	}
 
 	return
 }
 
-func (m azureBlobLeaseManager) getBlob(index int) AzureBlob {
+func (m *azureBlobLeaseManager) getBlob(index int) AzureBlob {
 	if m.blob != nil {
 		return m.blob
 	} else {
@@ -104,9 +106,7 @@ func (m azureBlobLeaseManager) getBlob(index int) AzureBlob {
 	}
 }
 
-func (m azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) (err error) {
-
-	// create a blob for each partition
+func (m *azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) {
 	for i := 0; i < count; i++ {
 		blob := m.getBlob(i)
 		var empty []byte
@@ -116,28 +116,25 @@ func (m azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) 
 				IfNoneMatch: "*",
 			},
 		}
-		_, err = blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil, azblob.ClientProvidedKeyOptions{})
+		_, err := blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			if serr, ok := err.(azblob.StorageError); ok {
 				switch serr.ServiceCode() {
 				case azblob.ServiceCodeBlobAlreadyExists, azblob.ServiceCodeLeaseIDMissing:
-					err = nil // these are legit conditions
-					m.emit(VerifiedBlobEvent, i, "", nil)
+					m.parent.Emit(VerifiedBlobEvent, i, "", nil)
 				default:
-					return
+					m.parent.Emit(ErrorEvent, 0, "creating partitions raised an error", serr)
 				}
 			} else {
-				return
+				m.parent.Emit(ErrorEvent, 0, "creating partitions raised an error", err)
 			}
 		} else {
-			m.emit(CreatedBlobEvent, i, "", nil)
+			m.parent.Emit(CreatedBlobEvent, i, "", nil)
 		}
 	}
-
-	return
 }
 
-func (m azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
+func (m *azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
 	secondsToLease := 15
 
 	// attempt to allocate the partition
@@ -148,14 +145,14 @@ func (m azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, in
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeLeaseAlreadyPresent:
 				// you cannot allocate a lease that is already assigned; try again in a bit
-				m.emit(FailedEvent, int(index), "", nil)
+				m.parent.Emit(FailedEvent, int(index), "", nil)
 				return
 			default:
-				m.emit(ErrorEvent, 0, err.Error(), nil)
+				m.parent.Emit(ErrorEvent, 0, err.Error(), nil)
 				return
 			}
 		} else {
-			m.emit(ErrorEvent, 0, err.Error(), nil)
+			m.parent.Emit(ErrorEvent, 0, err.Error(), nil)
 			return
 		}
 	}
