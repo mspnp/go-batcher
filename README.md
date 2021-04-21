@@ -81,9 +81,9 @@ Batcher use cases are not limited to datastores. Consider the scenario where you
 
 - __Operation__: Operations are enqueued into the Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
 
-- __SharedResource__: This is a rate limiter that allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. An Azure Storage Account is used as the capacity lease management system when SharedCapacity is set.
+- __SharedResource__: This is a rate limiter that allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. When shared capacity is set, an AzureBlobLeaseManager is used as the capacity lease management system.
 
-- __AzureBlobLeaseManager__: This is a Azure Blob Storage partition and lease management component used by SharedResource so that capacity can be shared across multiple instances.
+- __AzureBlobLeaseManager__: This is a Azure Blob Storage partition and lease management component that uses an Azure Storage Account. It is used by SharedResource so that capacity can be shared across multiple instances.
 
 ![topology](./docs/images/topology.png)
 
@@ -116,7 +116,7 @@ Some other terms will be used throughout...
 
 - __Rate Limiting__: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
 
-- __Shared Capacity__: Batcher supports using a rate limiter. One of the included rate limiters is SharedResource which allows for sharing capacity across multiple Instances. Sharing capacity in this way can reduce cost.
+- __Shared Capacity__: Batcher supports using a rate limiter. The provided rate limiter SharedResource allows for sharing capacity across multiple Instances. Sharing capacity in this way can reduce cost.
 
 - __Reserved Capacity__: SharedResource also supports a reserved capacity to improve latency. For instance, you might have 4 Instances that need to share 20K RU in a Cosmos database. You might give each 2K reserved capacity and share the remaining 14K RU. This gives each process low latency up to 2K RU but allows each process to request more.
 
@@ -143,7 +143,7 @@ Some other terms will be used throughout...
 This code sample shows the general usage...
 
 1. If you are going to use rate limiting...
-    1. Create one or more rate limiters via New() methods
+    1. Create a rate limiter for each Batcher via New() methods
     1. Set capacity for the rate limiters and/or attach LeaseManagers if appropriate
     1. Start() those rate limiters
 1. Create one or more Batchers via New() methods
@@ -272,7 +272,7 @@ To give a cost comparison with retail pricing in the East US region with 1 TB of
 
 ### Cost Increase
 
-Using default settings, each instance of SharedResource will make a single storage transaction roughly every 250 milliseconds _when it needs additional capacity_. Therefore, we can determine the maximum cost for 4 instances on an Azure Storage Account GPv2 (or Blob) as...
+When using an AzureBlobLeaseManager and default settings, each instance of the SharedResource will make a single storage transaction roughly every 250 milliseconds _when it needs additional capacity_. Therefore, we can determine the maximum cost for 4 instances on an Azure Storage Account GPv2 (or Blob) as...
 
 `(4 processes) x (4 lease operations per second) x (60 seconds per minute) x (60 minutes per hour) x 730 (hours per month) / (10,000 operations per billing unit) * ($0.004 per billing unit) = ~$168 month`
 
