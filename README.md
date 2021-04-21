@@ -83,6 +83,8 @@ Batcher use cases are not limited to datastores. Consider the scenario where you
 
 - __SharedResource__: This is a rate limiter that allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. An Azure Storage Account is used as the capacity lease management system when SharedCapacity is set.
 
+- __AzureBlobLeaseManager__: This is a Azure Blob Storage partition and lease management component used by SharedResource so that capacity can be shared across multiple instances.
+
 ![topology](./docs/images/topology.png)
 
 ### Terminology
@@ -98,9 +100,9 @@ Some other terms will be used throughout...
 - __MaxCapacity__: When using a rate limiter, the MaxCapacity is the maximum capacity that could even be provided.
   For the rate limiter SharedResource, this is the total of SharedCapacity and ReservedCapacity.
 
-  - __SharedCapacity__: SharedResource has a SharedCapacity which is defined when NewSharedResource() is called. This is the capacity for the datastore that is shared across any number of Instances. In the most simple case, if a Cosmos database had 20K RU and 4 Instances of the service using it, you might specify the SharedCapacity as 20K on each Instance if you want all the capacity shared. SharedCapacity reduces cost.
+- __SharedCapacity__: SharedResource optionally allows you to specify a SharedCapacity which is defined when NewSharedResource() is called. This is the capacity for the datastore that is shared across any number of Instances. In the most simple case, if a Cosmos database had 20K RU and 4 Instances of the service using it, you might specify the SharedCapacity as 20K on each Instance if you want all the capacity shared. SharedCapacity reduces cost.
 
-  - __ReservedCapacity__: SharedResource optionally allows you to specify a ReservedCapacity that will only be used by this Instance. For example, in the above example, if you wanted to reserve 2K RU for each of your Instances, you might use a ReservedCapacity of 2K (on each of 4 Instances) and then use 12K for the SharedCapacity. ReservedCapacity reduces latency.
+- __ReservedCapacity__: SharedResource optionally allows you to specify a ReservedCapacity that will only be used by this Instance. For example, in the above example, if you wanted to reserve 2K RU for each of your Instances, you might use a ReservedCapacity of 2K (on each of 4 Instances) and then use 12K for the SharedCapacity. ReservedCapacity reduces latency.
 
 - __Partitions__: The SharedResource rate limiter divides the SharedCapacity by a factor to determine the number of partitions to provision as blobs. If a process owns the exclusive lease on the partition blob, then it is allowed to use 1 factor of capacity. For example, if the SharedCapacity is 10K and the factor is 1K, then there are 10 partitions, control of each is worth 1K capacity.
 
@@ -142,8 +144,8 @@ This code sample shows the general usage...
 
 1. If you are going to use rate limiting...
     1. Create one or more rate limiters via New() methods
-    1. Provision() those rate limiters
-    1. Start() those rate limters
+    1. Set capacity for the rate limiters and/or attach LeaseManagers if appropriate
+    1. Start() those rate limiters
 1. Create one or more Batchers via New() methods
 1. Start() those Batchers
 1. As you need to process data...
@@ -246,7 +248,7 @@ The SharedResource rate limiter works like this...
 
 ![lease](./docs/images/lease.png)
 
-When there is only ReservedCapacity and no SharedCapacity is set, there is no dependency on Azure Blob Storage.
+When there is only ReservedCapacity and no SharedCapacity is set, there is no requirement to use a LeaseManager.
 
 ### Scenarios
 
@@ -278,7 +280,7 @@ However, this is a maximum cost - actual costs in many cases will be much lower 
 
 ### Changing Capacity
 
-The SharedResource rate limiter supports changing capacity after Start(). You can call `SetSharedCapacity(newcap)` and `SetReservedCapacity(newcap)`. If you change SharedCapacity, to a higher value than previously seen, realize it will need to provision blobs (per SharedCapacity divided by Factor) before it can return to its normal cycle of procuring partitions for capacity.
+The SharedResource rate limiter supports changing capacity after Start(). You can call `SetSharedCapacity(newcap)` and `SetReservedCapacity(newcap)`. If you change SharedCapacity, to a higher value than previously seen, realize it will need to provision partitions again. For AzureBlobLeaseManager, it will need to provision blobs (per SharedCapacity divided by Factor) before it can return to its normal cycle of procuring partitions for capacity.
 
 ## Determining Cost
 
@@ -296,6 +298,6 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 
 - The pause logic is an existing feature that delays new batches for a fixed amount of time, but it might be nice to have an exponential back-off.
 
-- Currently the only shared capacity rate limiter is for Azure. It would be nice to add support for Zookeeper, Consul, etcd, redis/redsync, or similar.
+- Currently the only LeaseManager is for Azure Blob Storage. It would be nice to add support for Zookeeper, Consul, etcd, redis/redsync, or similar.
 
 - There is currently no way to prioritize Operations so they are released before other Batches, but now that the Buffer is a double linked list, this would be possible.

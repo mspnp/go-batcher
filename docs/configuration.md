@@ -96,7 +96,6 @@ watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 
 - __WithMaxOperationTime__ [OPTIONAL]: This determines how long the system should wait for the callback function to be completed on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. If MaxOperationTime is not provided on the Watcher, the Batcher MaxOperationTime is used.
 
-<!-- TODO: Review -->
 ## SharedResource configuration
 
 Creating a new SharedResource might look like this...
@@ -118,10 +117,26 @@ resource := gobatcher.NewSharedResource().
 
 - __WithReservedCapacity__ [OPTIONAL]: You could run SharedResource with only SharedCapacity, but then every time it needs to run a single operation, the latency of that operation would be increased by the time it takes to allocate a partition. To improve the latency of these one-off operations, you may reserve some capacity so it is always available. Generally, you would reserve a small capacity and share the bulk of the capacity.
 
-- __WithSharedCapacity__ [OPTIONAL]: To create a provisioned resource, you must provide the capacity that will be shared across all processes. Based on this and Factor, the correct number of partitions can be created in the Azure Storage Account. Expects LeaseManager.
+- __WithSharedCapacity__ [OPTIONAL]: To create a provisioned resource, you must provide the capacity that will be shared across all processes. Based on this and Factor, the correct number of partitions can be created in the Azure Storage Account. Shared capacity will require a leaseManager that is responsible for provisioning partitions and managing exclusive leases for those partitions.
 
 - __WithFactor__ [DEFAULT: 1]: The SharedCapacity will be divided by the Factor (rounded up) to determine the number of partitions to create when Provision() is called. For example, if you have 10,200 of SharedCapacity and a Factor of 1000, then there will be 11 partitions. Whenever a partition is obtained by SharedResource, it will be worth a single Factor or 1000 RU. For predictability, the SharedCapacity should always be evenly divisible by Factor. SharedResource does not support more than 500 partitions.
 
 - __WithMaxInterval__ [DEFAULT: 500ms]: This determines the maximum time that the SharedResource will wait before attempting to allocate a new partition (if one is needed). The interval is random to improve entropy, but it won't be longer than this specified time. If you want fewer storage transactions, you could increase this time, but it would slow down how quickly the SharedResource can obtain new RUs.
 
 After creation, you must call Provision() and then Start() on any rate limiters to begin processing.
+
+### AzureBlobLeaseManager
+
+Creating an AzureBlobLeaseManager might look like this...
+
+```go
+leaseManager := gobatcher.NewAzureBlobLeaseManager(accountName, containerName, masterKey)
+```
+
+__accountName__ [REQUIRED]: The account name of the Azure Storage Account that will host the zero-byte blobs that serve as partitions for capacity.
+
+__containerName__ [REQUIRED]: The container name that will host the zero-byte blobs that serve as partitions for capacity.
+
+__masterKey__ [REQUIRED]: There needs to be some way to authenticate access to the Azure Storage Account, right now only master keys are supported.
+
+After creation, you will provide the leaseManager as a parameter to SharedResource.WithSharedCapacity().

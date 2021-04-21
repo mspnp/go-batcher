@@ -5,8 +5,8 @@ Events are raised with a "name" (string), "val" (int), and "msg" (*string).
 ## Events raised by Batcher
 
 The following events can be raised by Batcher...
-<!-- TODO: Review shutdown-->
-- __shutdown__: This is raised when the context is cancelled.
+
+- __shutdown__: This is raised when the context provided to Start() is "done" (cancelled, deadlined, etc.).
 
 - __pause__: This is raised after Pause() is called on a Batcher instance. The val is the number of milliseconds that it was paused for.
 
@@ -24,15 +24,11 @@ The following events can be raised by Batcher...
 
 - __flush-done__: This is raised only when WithEmitFlush has been added to Batcher. It is raised at the FlushInterval when the flush is completed. There is no security concern with event, it is disabled by default because it raises every 100ms by default.
 
-<!-- TODO: LeaseManager events-->
-
 ## Events raised by SharedResource
 
-<!-- TODO: Review shutdown + Are we missing provisionstart and provisiondone events here? -->
+The following events can be raised by SharedResource or its associated LeaseManager...
 
-The following events can be raised by SharedResource...
-
-- __shutdown__: This is raised when the context is cancelled.
+- __shutdown__: This is raised when the context provided to Start() is "done" (cancelled, deadlined, etc.).
 
 - __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
 
@@ -48,10 +44,16 @@ The following events can be raised by SharedResource...
 
 - __error__: This is raised if there was some unexpected error condition, such as an authentication failure when attempting to allocate a partition.
 
-- __created-container__: The Azure Storage Account must exist, but the container can be created in Provision(). This event is raised if that happens. The msg is the fully qualified path to the container.
+- __provision-start__: If SharedCapacity is used, there will be a provisioning activity at Start() and whenever the SharedCapacity changes. This event is raised at the start of that provisioning activity. The provisioning activity may raise events such as those shown below by AzureBlobLeaseManager.
 
-- __verified-container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
+- __provision-done__: This is raised at the end of provisioning activity after all other provisioning events are raised.
 
-- __created-blob__: During Provision(), if a zero-byte blob needs to be created for a partition, this event is raised. The val is the index of the partition created.
+### Events raised when using AzureBlobLeaseManager
 
-- __verified-blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
+- __created-container__: This is raised if a container is created during a provisioning activity. The msg is the fully qualified path to the container.
+
+- __verified-container__: This is raised if a container was found to already exist during a provisioning activity. The msg is the fully qualified path to the container.
+
+- __created-blob__: This is raised if a zero-byte blob needs to be created for a partition. The val is the index of the partition created.
+
+- __verified-blob__: This is raised if a zero-byte blob partition was found to already exist. The val is the index of the partition verified.

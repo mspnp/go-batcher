@@ -77,8 +77,8 @@ There are public interfaces provided for Batcher, Watcher, Operation, SharedReso
     ```
 
 ### SharedResource
-<!-- TODO: Review -->
-One of the configuration options for SharedResource is `WithSharedCapacity` using a `LeaseManager`. For unit testing, you can mock the LeaseManager. This allows you to unit test without needing a real Azure Storage Account.
+
+One of the configuration options for SharedResource is `WithSharedCapacity()` using a `LeaseManager`. For unit testing, you can mock the LeaseManager. This allows you to unit test without needing a real Azure Storage Account.
 
 1. Implement the mock interface for LeaseManager:
 

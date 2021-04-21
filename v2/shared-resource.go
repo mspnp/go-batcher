@@ -29,7 +29,7 @@ type SharedResource interface {
 type sharedResource struct {
 	EventerBase
 
-	// configuration items that should not change after Provision()
+	// configuration items that should not change after Start()
 	factor           uint32
 	maxInterval      uint32
 	sharedCapacity   uint32
