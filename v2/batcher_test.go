@@ -74,7 +74,7 @@ func TestEnqueue(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		mgr := &mockLeaseManager{}
-		mgr.On("Parent", mock.Anything).Once()
+		mgr.On("RaiseEventsTo", mock.Anything).Once()
 		res := gobatcher.NewSharedResource().
 			WithReservedCapacity(2000).
 			WithSharedCapacity(10000, mgr).
@@ -351,7 +351,7 @@ func TestNeedsCapacity(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		mgr := &mockLeaseManager{}
-		mgr.On("Parent", mock.Anything).Once()
+		mgr.On("RaiseEventsTo", mock.Anything).Once()
 		res := gobatcher.NewSharedResource().
 			WithSharedCapacity(10000, mgr).
 			WithFactor(1000)
@@ -723,7 +723,7 @@ func TestTimers(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			mgr := &mockLeaseManager{}
-			mgr.On("Parent", mock.Anything).Once()
+			mgr.On("RaiseEventsTo", mock.Anything).Once()
 			res := gobatcher.NewSharedResource().
 				WithSharedCapacity(10000, mgr).
 				WithFactor(1000)

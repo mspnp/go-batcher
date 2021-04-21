@@ -48,6 +48,7 @@ func (r *EventerBase) RemoveListener(id uuid.UUID) {
 
 }
 
+// To raise an event, you may emit a unique string for the event along with val, msg, and metadata as appropriate to describe the event.
 func (r *EventerBase) Emit(event string, val int, msg string, metadata interface{}) {
 
 	// lock

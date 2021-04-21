@@ -87,7 +87,7 @@ One of the configuration options for SharedResource is `WithSharedCapacity()` us
         mock.Mock
     }
 
-    func (mgr *mockLeaseManager) Parent(sr gobatcher.Eventer) {
+    func (mgr *mockLeaseManager) RaiseEventsTo(sr gobatcher.Eventer) {
         mgr.Called(sr)
     }
 
@@ -114,7 +114,7 @@ One of the configuration options for SharedResource is `WithSharedCapacity()` us
         defer cancel()
 
         mgr := &mockLeaseManager{}
-        mgr.On("Parent", mock.Anything).Once()
+        mgr.On("RaiseEventsTo", mock.Anything).Once()
         mgr.On("Provision", mock.Anything).Return(nil).Once()
         mgr.On("CreatePartitions", mock.Anything, 10).Once()
         res := gobatcher.NewSharedResource().

@@ -13,7 +13,7 @@ import (
 type azureBlobLeaseManager struct {
 
 	// configuration items that should not change after Provision()
-	parent        Eventer
+	eventer       Eventer
 	accountName   *string
 	masterKey     *string
 	containerName *string
@@ -23,6 +23,8 @@ type azureBlobLeaseManager struct {
 	blob      azureBlob
 }
 
+// This method creates a new AzureBlobLeaseManager to allow the SharedResource to use Azure Blob Storage to manage leases across instances. You
+// must provide an Azure Storage accountName, containerName, and a masterKey.
 func NewAzureBlobLeaseManager(accountName, containerName, masterKey string) LeaseManager {
 	mgr := &azureBlobLeaseManager{
 		accountName:   &accountName,
@@ -43,10 +45,13 @@ func newMockAzureBlobLeaseManager(accountName, containerName, masterKey string, 
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) Parent(e Eventer) {
-	m.parent = e
+// FOR INTERNAL USE ONLY. Events raised by AzureBlobLeaseManager must be raised to an Eventer. Specifically the SharedResource it is associated with
+// will be used as the Eventer. This method is called in SharedResource.WithSharedCapacity().
+func (m *azureBlobLeaseManager) RaiseEventsTo(e Eventer) {
+	m.eventer = e
 }
 
+// FOR INTERNAL USE ONLY. This is called by SharedResource when the Azure Blob Storage Container should be created or verified.
 func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 
 	// choose the appropriate credential
@@ -81,7 +86,7 @@ func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeContainerAlreadyExists:
 				err = nil // this is a legit condition
-				m.parent.Emit(VerifiedContainerEvent, 0, ref, nil)
+				m.eventer.Emit(VerifiedContainerEvent, 0, ref, nil)
 			default:
 				return
 			}
@@ -89,7 +94,7 @@ func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 			return
 		}
 	} else {
-		m.parent.Emit(CreatedContainerEvent, 0, ref, nil)
+		m.eventer.Emit(CreatedContainerEvent, 0, ref, nil)
 	}
 
 	return
@@ -104,6 +109,7 @@ func (m *azureBlobLeaseManager) getBlob(index int) azureBlob {
 	}
 }
 
+// FOR INTERNAL USE ONLY. This is called by SharedResource when the Azure Blob Storage blobs (partitions) should be created or verified.
 func (m *azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) {
 	for i := 0; i < count; i++ {
 		blob := m.getBlob(i)
@@ -119,19 +125,20 @@ func (m *azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int)
 			if serr, ok := err.(azblob.StorageError); ok {
 				switch serr.ServiceCode() {
 				case azblob.ServiceCodeBlobAlreadyExists, azblob.ServiceCodeLeaseIDMissing:
-					m.parent.Emit(VerifiedBlobEvent, i, "", nil)
+					m.eventer.Emit(VerifiedBlobEvent, i, "", nil)
 				default:
-					m.parent.Emit(ErrorEvent, 0, "creating partitions raised an error", serr)
+					m.eventer.Emit(ErrorEvent, 0, "creating partitions raised an error", serr)
 				}
 			} else {
-				m.parent.Emit(ErrorEvent, 0, "creating partitions raised an error", err)
+				m.eventer.Emit(ErrorEvent, 0, "creating partitions raised an error", err)
 			}
 		} else {
-			m.parent.Emit(CreatedBlobEvent, i, "", nil)
+			m.eventer.Emit(CreatedBlobEvent, i, "", nil)
 		}
 	}
 }
 
+// FOR INTERNAL USE ONLY. This is called by SharedResource when it needs to lease partitions for capacity.
 func (m *azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
 	secondsToLease := 15
 
@@ -143,14 +150,14 @@ func (m *azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, i
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeLeaseAlreadyPresent:
 				// you cannot allocate a lease that is already assigned; try again in a bit
-				m.parent.Emit(FailedEvent, int(index), "", nil)
+				m.eventer.Emit(FailedEvent, int(index), "", nil)
 				return
 			default:
-				m.parent.Emit(ErrorEvent, 0, err.Error(), nil)
+				m.eventer.Emit(ErrorEvent, 0, err.Error(), nil)
 				return
 			}
 		} else {
-			m.parent.Emit(ErrorEvent, 0, err.Error(), nil)
+			m.eventer.Emit(ErrorEvent, 0, err.Error(), nil)
 			return
 		}
 	}

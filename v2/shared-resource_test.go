@@ -17,7 +17,7 @@ type mockLeaseManager struct {
 	mock.Mock
 }
 
-func (mgr *mockLeaseManager) Parent(sr gobatcher.Eventer) {
+func (mgr *mockLeaseManager) RaiseEventsTo(sr gobatcher.Eventer) {
 	mgr.Called(sr)
 }
 
@@ -39,7 +39,7 @@ func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	res := gobatcher.NewSharedResource().
@@ -63,7 +63,7 @@ func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 500).Return(nil).Once()
 	res := gobatcher.NewSharedResource().
@@ -90,7 +90,7 @@ func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 11).Once()
 	res := gobatcher.NewSharedResource().
@@ -113,7 +113,7 @@ func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
 
 func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	res := gobatcher.NewSharedResource().
 		WithReservedCapacity(2000).
 		WithSharedCapacity(10000, mgr).
@@ -125,7 +125,7 @@ func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
 
 func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	res := gobatcher.NewSharedResource().
 		WithReservedCapacity(2000).
 		WithSharedCapacity(10000, mgr).
@@ -137,7 +137,7 @@ func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
 
 func TestCapacityIsEqualToReservedWhenThereIsNoRequestForCapacity(t *testing.T) {
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	res := gobatcher.NewSharedResource().
 		WithReservedCapacity(2000).
 		WithSharedCapacity(10000, mgr)
@@ -150,7 +150,7 @@ func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Once()
@@ -190,7 +190,7 @@ func TestGiveMeGrantsCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(4)
@@ -229,7 +229,7 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 
@@ -268,7 +268,7 @@ func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 
@@ -307,7 +307,7 @@ func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 13).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(3)
@@ -389,7 +389,7 @@ func TestAzureSRStartAnnouncesStartingCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 1).Once()
 	res := gobatcher.NewSharedResource().
@@ -417,7 +417,7 @@ func TestAzureSRStartCanLeaseAndReleasePartitions(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(100 * time.Millisecond).Times(2)
@@ -459,7 +459,7 @@ func TestZeroDurationLeasesDoNotAllocateOrRelease(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(0 * time.Millisecond) // called at least once
@@ -490,7 +490,7 @@ func TestSharedResource_ProvisionReturnsErr(t *testing.T) {
 
 	mgr := &mockLeaseManager{}
 	provErr := errors.New("provision error")
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(provErr).Once()
 	res := gobatcher.NewSharedResource().
 		WithSharedCapacity(10000, mgr).
@@ -519,7 +519,7 @@ func TestAzureSRStartOnlyAllocatesToMaxCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
@@ -541,7 +541,7 @@ func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(10)
@@ -581,7 +581,7 @@ func TestSharedResource_SetSharedCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("CreatePartitions", mock.Anything, 20).Once()
@@ -621,7 +621,7 @@ func TestSetReservedCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	res := gobatcher.NewSharedResource().
@@ -656,7 +656,7 @@ func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Times(5)
@@ -703,7 +703,7 @@ func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 10).Once()
 	mgr.On("CreatePartitions", mock.Anything, 0).Once()
@@ -756,7 +756,7 @@ func TestStartingWithZeroSharedCapacity(t *testing.T) {
 	defer cancel()
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 0).Once()
 	mgr.On("LeasePartition", mock.Anything, mock.Anything, mock.Anything).Return(15 * time.Second).Once()
@@ -827,7 +827,7 @@ func TestSharedResource_ShutdownWithSharedCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mgr := &mockLeaseManager{}
-	mgr.On("Parent", mock.Anything).Once()
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	mgr.On("Provision", mock.Anything).Return(nil).Once()
 	mgr.On("CreatePartitions", mock.Anything, 2).Once()
 

@@ -99,7 +99,7 @@ func (r *sharedResource) WithSharedCapacity(val uint32, mgr LeaseManager) Shared
 		panic(InitializationOnlyError)
 	}
 	atomic.StoreUint32(&r.sharedCapacity, val)
-	mgr.Parent(r)
+	mgr.RaiseEventsTo(r)
 	r.leaseManager = mgr
 	return r
 }
