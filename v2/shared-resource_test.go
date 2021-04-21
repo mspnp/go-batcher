@@ -651,6 +651,28 @@ func TestSharedResource_SetReservedCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
+func TestSharedResource_SetSharedCapacityWithoutLeaseManager(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(2000)
+	var wg sync.WaitGroup
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.CapacityEvent:
+			wg.Done()
+		}
+	})
+	wg.Add(1)
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	wg.Wait()
+	assert.Equal(t, uint32(2000), res.Capacity())
+	serr := res.SetSharedCapacity(2000)
+	assert.Equal(t, gobatcher.SharedCapacityNotProvisioned, serr)
+}
+
 func TestSharedResource_AddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
