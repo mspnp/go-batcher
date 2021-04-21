@@ -35,7 +35,7 @@ func (mgr *mockLeaseManager) LeasePartition(ctx context.Context, id string, inde
 	return args.Get(0).(time.Duration)
 }
 
-func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
+func TestSharedResource_Start_FactorDefaultsToOne(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
@@ -59,7 +59,7 @@ func TestAzureSRStart_FactorDefaultsToOne(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
+func TestSharedResource_NoMoreThan500Partitions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
@@ -86,7 +86,7 @@ func TestAzureSRStart_NoMoreThan500Partitions(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
+func TestSharedResource_PartialPartitionsRoundUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
@@ -111,7 +111,7 @@ func TestAzureSRStart_PartialPartitionsRoundUp(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
+func TestSharedResource_MaxCapacityIsSharedPlusReserved(t *testing.T) {
 	mgr := &mockLeaseManager{}
 	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	res := gobatcher.NewSharedResource().
@@ -123,7 +123,7 @@ func TestMaxCapacityIsSharedPlusReserved(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
+func TestSharedResource_MaxCapacityCapsAt500Partitions(t *testing.T) {
 	mgr := &mockLeaseManager{}
 	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	res := gobatcher.NewSharedResource().
@@ -135,7 +135,7 @@ func TestMaxCapacityCapsAt500Partitions(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestCapacityIsEqualToReservedWhenThereIsNoRequestForCapacity(t *testing.T) {
+func TestSharedResource_CapacityIsEqualToReservedWhenThereIsNoRequestForCapacity(t *testing.T) {
 	mgr := &mockLeaseManager{}
 	mgr.On("RaiseEventsTo", mock.Anything).Once()
 	res := gobatcher.NewSharedResource().
@@ -145,7 +145,7 @@ func TestCapacityIsEqualToReservedWhenThereIsNoRequestForCapacity(t *testing.T) 
 	mgr.AssertExpectations(t)
 }
 
-func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
+func TestSharedResource_CapacityIsEqualToReservedPlusShared(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -185,7 +185,7 @@ func TestCapacityIsEqualToReservedPlusShared(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestGiveMeGrantsCapacity(t *testing.T) {
+func TestSharedResource_GiveMeGrantsCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -224,7 +224,7 @@ func TestGiveMeGrantsCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
+func TestSharedResource_GiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -263,7 +263,7 @@ func TestGiveMeDoesNotGrantIfReserveIsEqual(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
+func TestSharedResource_GiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -302,7 +302,7 @@ func TestGiveMeDoesNotGrantIfReserveIsHigher(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
+func TestSharedResource_GiveMeGrantsAccordingToFactor(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -341,7 +341,7 @@ func TestGiveMeGrantsAccordingToFactor(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestNoProvisionWithoutSharedCapacity(t *testing.T) {
+func TestSharedResource_NoProvisionWithoutSharedCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	res := gobatcher.NewSharedResource().
@@ -359,7 +359,7 @@ func TestNoProvisionWithoutSharedCapacity(t *testing.T) {
 	wg.Wait()
 }
 
-func TestSRCannotBeStartedMoreThanOnce(t *testing.T) {
+func TestSharedResource_CannotBeStartedMoreThanOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	res := gobatcher.NewSharedResource().
@@ -385,7 +385,7 @@ func TestSRCannotBeStartedMoreThanOnce(t *testing.T) {
 	}
 }
 
-func TestAzureSRStartAnnouncesStartingCapacity(t *testing.T) {
+func TestSharedResource_StartAnnouncesStartingCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := &mockLeaseManager{}
@@ -412,7 +412,7 @@ func TestAzureSRStartAnnouncesStartingCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestAzureSRStartCanLeaseAndReleasePartitions(t *testing.T) {
+func TestSharedResource_StartCanLeaseAndReleasePartitions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -454,7 +454,7 @@ func TestAzureSRStartCanLeaseAndReleasePartitions(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestZeroDurationLeasesDoNotAllocateOrRelease(t *testing.T) {
+func TestSharedResource_ZeroDurationLeasesDoNotAllocateOrRelease(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -514,7 +514,7 @@ func TestSharedResource_ProvisionReturnsErr(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestAzureSRStartOnlyAllocatesToMaxCapacity(t *testing.T) {
+func TestSharedResource_StartOnlyAllocatesToMaxCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -536,7 +536,7 @@ func TestAzureSRStartOnlyAllocatesToMaxCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestNoEventsRaisedAfterRemoveListener(t *testing.T) {
+func TestSharedResource_NoEventsRaisedAfterRemoveListener(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -616,7 +616,7 @@ func TestSharedResource_SetSharedCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestSetReservedCapacity(t *testing.T) {
+func TestSharedResource_SetReservedCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -651,7 +651,7 @@ func TestSetReservedCapacity(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
+func TestSharedResource_AddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -698,7 +698,7 @@ func TestAddingSharedCapacityKeepsExistingPartitionLeases(t *testing.T) {
 	mgr.AssertExpectations(t)
 }
 
-func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
+func TestSharedResource_ExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -751,7 +751,7 @@ func TestExpiringLeasesThatAreNoLongerTrackedDoesNotCausePanic(t *testing.T) {
 	assert.Equal(t, uint32(0), res.Capacity())
 }
 
-func TestStartingWithZeroSharedCapacity(t *testing.T) {
+func TestSharedResource_StartingWithZeroSharedCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

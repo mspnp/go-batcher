@@ -15,125 +15,122 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-func TestEnqueue(t *testing.T) {
+func TestBatcher_Enqueue_IsAllowedBeforeStartup(t *testing.T) {
+	batcher := gobatcher.NewBatcher()
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	operation := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+	err := batcher.Enqueue(operation)
+	assert.NoError(t, err, "expect enqueue to be fine even if not started")
+}
 
-	t.Run("enqueue is allowed before startup", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		operation := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-		err := batcher.Enqueue(operation)
-		assert.NoError(t, err, "expect enqueue to be fine even if not started")
-	})
+func TestBatcher_Enqueue_MustIncludeAnOperation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher()
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no errors on startup")
+	err = batcher.Enqueue(nil)
+	if err != nil {
+		_ = err.Error() // improves code coverage
+	}
+	assert.Equal(t, gobatcher.NoOperationError, err, "expect a no-operation error")
+}
 
-	t.Run("enqueue must include an operation", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher()
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no errors on startup")
-		err = batcher.Enqueue(nil)
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Equal(t, gobatcher.NoOperationError, err, "expect a no-operation error")
-	})
+func TestBatcher_Enqueue_OperationsRequiresAWatcher(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher()
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no errors on startup")
+	operation := gobatcher.NewOperation(nil, 0, struct{}{}, false)
+	err = batcher.Enqueue(operation)
+	if err != nil {
+		_ = err.Error() // improves code coverage
+	}
+	assert.Equal(t, gobatcher.NoWatcherError, err, "expect a no-watcher error")
+}
 
-	t.Run("operations require a watcher", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher()
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no errors on startup")
-		operation := gobatcher.NewOperation(nil, 0, struct{}{}, false)
-		err = batcher.Enqueue(operation)
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Equal(t, gobatcher.NoWatcherError, err, "expect a no-watcher error")
-	})
+func TestBatcher_Enqueue_OperationsCannotExceedMaxCapacity_Reserved(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(1000)
+	batcher := gobatcher.NewBatcher().
+		WithRateLimiter(res)
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no errors on startup")
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	operation := gobatcher.NewOperation(watcher, 2000, struct{}{}, false)
+	err = batcher.Enqueue(operation)
+	if err != nil {
+		_ = err.Error() // improves code coverage
+	}
+	assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
+}
 
-	t.Run("operations cannot exceed max capacity (provisioned)", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		res := gobatcher.NewSharedResource().
-			WithReservedCapacity(1000)
-		batcher := gobatcher.NewBatcher().
-			WithRateLimiter(res)
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no errors on startup")
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		operation := gobatcher.NewOperation(watcher, 2000, struct{}{}, false)
-		err = batcher.Enqueue(operation)
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
-	})
+func TestBatcher_Enqueue_OperationsCannotExceedMaxCapacity_SharedAndReserved(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := &mockLeaseManager{}
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(2000).
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000)
+	batcher := gobatcher.NewBatcher().
+		WithRateLimiter(res)
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no errors on startup")
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	good := gobatcher.NewOperation(watcher, 11000, struct{}{}, false)
+	err = batcher.Enqueue(good)
+	assert.NoError(t, err)
+	bad := gobatcher.NewOperation(watcher, 13000, struct{}{}, false)
+	err = batcher.Enqueue(bad)
+	if err != nil {
+		_ = err.Error() // improves code coverage
+	}
+	assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
+	mgr.AssertExpectations(t)
+}
 
-	t.Run("operations cannot exceed max capacity (shared)", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		mgr := &mockLeaseManager{}
-		mgr.On("RaiseEventsTo", mock.Anything).Once()
-		res := gobatcher.NewSharedResource().
-			WithReservedCapacity(2000).
-			WithSharedCapacity(10000, mgr).
-			WithFactor(1000)
-		batcher := gobatcher.NewBatcher().
-			WithRateLimiter(res)
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no errors on startup")
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		good := gobatcher.NewOperation(watcher, 11000, struct{}{}, false)
-		err = batcher.Enqueue(good)
-		assert.NoError(t, err)
-		bad := gobatcher.NewOperation(watcher, 13000, struct{}{}, false)
-		err = batcher.Enqueue(bad)
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Equal(t, gobatcher.TooExpensiveError, err, "expect a too-expensive-error error")
-		mgr.AssertExpectations(t)
-	})
-
-	t.Run("operations cannot be attempted more than x times", func(t *testing.T) {
-		// NOTE: this test works by recursively enqueuing the same operation over and over again until it fails
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond)
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no errors on startup")
-		var mu sync.Mutex
-		attempts := 0
-		func() {
-			var op gobatcher.Operation
-			enqueue := func() {
-				mu.Lock()
-				defer mu.Unlock()
-				attempts++
-				if eerr := batcher.Enqueue(op); eerr != nil {
-					if eerr != nil {
-						_ = eerr.Error() // improves code coverage
-					}
-					assert.Equal(t, gobatcher.TooManyAttemptsError, eerr, "expect the error to be too-many-attempts")
-					return
+func TestBatcher_Enqueue_OperationsCannotBeAttemptedMoreThanXTimes(t *testing.T) {
+	// NOTE: this test works by recursively enqueuing the same operation over and over again until it fails
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond)
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no errors on startup")
+	var mu sync.Mutex
+	attempts := 0
+	func() {
+		var op gobatcher.Operation
+		enqueue := func() {
+			mu.Lock()
+			defer mu.Unlock()
+			attempts++
+			if eerr := batcher.Enqueue(op); eerr != nil {
+				if eerr != nil {
+					_ = eerr.Error() // improves code coverage
 				}
-				if attempts > 8 {
-					assert.FailNow(t, "the max-attempts governor didn't work, we have tried too many times")
-				}
+				assert.Equal(t, gobatcher.TooManyAttemptsError, eerr, "expect the error to be too-many-attempts")
+				return
 			}
-			watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-				enqueue()
-			}).WithMaxAttempts(3)
-			op = gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+			if attempts > 8 {
+				assert.FailNow(t, "the max-attempts governor didn't work, we have tried too many times")
+			}
+		}
+		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 			enqueue()
-			time.Sleep(100 * time.Millisecond)
-		}()
-		mu.Lock()
-		defer mu.Unlock()
-		assert.Equal(t, 4, attempts, "expect enqueue will be accepted 3 times, but fail on the 4th")
-	})
+		}).WithMaxAttempts(3)
+		op = gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+		enqueue()
+		time.Sleep(100 * time.Millisecond)
+	}()
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 4, attempts, "expect enqueue will be accepted 3 times, but fail on the 4th")
 
 	multipleEnqueueTests := []bool{false, true}
 	for _, batching := range multipleEnqueueTests {
@@ -180,60 +177,56 @@ func TestEnqueue(t *testing.T) {
 			assert.Equal(t, uint32(4), attempts, "expecting 4 attempts were made (even though max is 1) because enqueue happened before processing")
 		})
 	}
-
-	t.Run("enqueue will block caller if buffer full (default)", func(t *testing.T) {
-		batcher := gobatcher.NewBatcherWithBuffer(1)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		var err error
-		op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-		err = batcher.Enqueue(op1)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		done := make(chan bool, 1)
-		go func() {
-			op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-			err = batcher.Enqueue(op2)
-			assert.NoError(t, err, "expecting no error on enqueue")
-			done <- true
-		}()
-		timeout := false
-		select {
-		case <-done:
-			assert.Fail(t, "did not expect the enqueue to complete because there was no buffer")
-		case <-time.After(500 * time.Millisecond):
-			timeout = true
-		}
-		assert.True(t, timeout, "expecting the second enqueue to timeout (was blocking)")
-	})
-
-	t.Run("enqueue will throw error if buffer is full (config)", func(t *testing.T) {
-		batcher := gobatcher.NewBatcherWithBuffer(1).
-			WithErrorOnFullBuffer()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		var err error
-		op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-		err = batcher.Enqueue(op1)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-		err = batcher.Enqueue(op2)
-		if err != nil {
-			_ = err.Error() // improves code coverage
-		}
-		assert.Equal(t, gobatcher.BufferFullError, err, "expecting the buffer to be full")
-	})
-
 }
 
-func TestOperationsInBuffer(t *testing.T) {
-
-	t.Run("enqueuing operations increases num in buffer", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
+func TestBatcher_Enqueue_WillBlockCallerIfBafferFull_Default(t *testing.T) {
+	batcher := gobatcher.NewBatcherWithBuffer(1)
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	var err error
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+	err = batcher.Enqueue(op1)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	done := make(chan bool, 1)
+	go func() {
+		op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+		err = batcher.Enqueue(op2)
 		assert.NoError(t, err, "expecting no error on enqueue")
-		cap := batcher.OperationsInBuffer()
-		assert.Equal(t, uint32(1), cap, "expecting the number of operations to match the number enqueued")
-	})
+		done <- true
+	}()
+	timeout := false
+	select {
+	case <-done:
+		assert.Fail(t, "did not expect the enqueue to complete because there was no buffer")
+	case <-time.After(500 * time.Millisecond):
+		timeout = true
+	}
+	assert.True(t, timeout, "expecting the second enqueue to timeout (was blocking)")
+}
+
+func TestBatcher_Enqueue_WillThrowErrorIfBufferIsFull_Config(t *testing.T) {
+	batcher := gobatcher.NewBatcherWithBuffer(1).
+		WithErrorOnFullBuffer()
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	var err error
+	op1 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+	err = batcher.Enqueue(op1)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	op2 := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+	err = batcher.Enqueue(op2)
+	if err != nil {
+		_ = err.Error() // improves code coverage
+	}
+	assert.Equal(t, gobatcher.BufferFullError, err, "expecting the buffer to be full")
+}
+
+func TestBatcher_EnqueuingOperationsIncreasesNumInBuffer(t *testing.T) {
+	batcher := gobatcher.NewBatcher()
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	cap := batcher.OperationsInBuffer()
+	assert.Equal(t, uint32(1), cap, "expecting the number of operations to match the number enqueued")
 
 	multipleDoneTests := []bool{false, true}
 	for _, batching := range multipleDoneTests {
@@ -263,20 +256,16 @@ func TestOperationsInBuffer(t *testing.T) {
 			assert.Equal(t, uint32(0), after, "expecting the buffer to be empty after processing")
 		})
 	}
-
 }
 
-func TestNeedsCapacity(t *testing.T) {
-
-	t.Run("cost updates the target", func(t *testing.T) {
-		batcher := gobatcher.NewBatcher()
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		cap := batcher.NeedsCapacity()
-		assert.Equal(t, uint32(100), cap, "expecting the capacity to match the operation cost")
-	})
+func TestBatcher_NeedsCapacity_CostUpdatesTheTarget(t *testing.T) {
+	batcher := gobatcher.NewBatcher()
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	cap := batcher.NeedsCapacity()
+	assert.Equal(t, uint32(100), cap, "expecting the capacity to match the operation cost")
 
 	multipleDoneTests := []bool{false, true}
 	for _, batching := range multipleDoneTests {
@@ -307,88 +296,87 @@ func TestNeedsCapacity(t *testing.T) {
 			assert.Equal(t, uint32(0), after, "expecting the cost be 0 after processing")
 		})
 	}
+}
 
-	t.Run("ensure operation costs result in requests", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		res := gobatcher.NewSharedResource().
-			WithReservedCapacity(10000)
-		batcher := gobatcher.NewBatcher().
-			WithRateLimiter(res).
-			WithFlushInterval(1 * time.Millisecond).
-			WithEmitRequest()
-		var mu sync.Mutex
-		var max int
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.RequestEvent:
-				mu.Lock()
-				defer mu.Unlock()
-				if val > max {
-					max = val
-				}
+func TestBatcher_NeedsCapacity_EnsureOperationCostsResultInRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(10000)
+	batcher := gobatcher.NewBatcher().
+		WithRateLimiter(res).
+		WithFlushInterval(1 * time.Millisecond).
+		WithEmitRequest()
+	var mu sync.Mutex
+	var max int
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.RequestEvent:
+			mu.Lock()
+			defer mu.Unlock()
+			if val > max {
+				max = val
 			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			time.Sleep(400 * time.Millisecond)
-		})
-		var err error
-		op1 := gobatcher.NewOperation(watcher, 800, struct{}{}, false)
-		err = batcher.Enqueue(op1)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		op2 := gobatcher.NewOperation(watcher, 300, struct{}{}, false)
-		err = batcher.Enqueue(op2)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no error on start")
-		time.Sleep(200 * time.Millisecond)
-		mu.Lock()
-		defer mu.Unlock()
-		assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
+		}
 	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		time.Sleep(400 * time.Millisecond)
+	})
+	var err error
+	op1 := gobatcher.NewOperation(watcher, 800, struct{}{}, false)
+	err = batcher.Enqueue(op1)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	op2 := gobatcher.NewOperation(watcher, 300, struct{}{}, false)
+	err = batcher.Enqueue(op2)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no error on start")
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
+}
 
-	t.Run("ensure operation costs result in target", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		mgr := &mockLeaseManager{}
-		mgr.On("RaiseEventsTo", mock.Anything).Once()
-		res := gobatcher.NewSharedResource().
-			WithSharedCapacity(10000, mgr).
-			WithFactor(1000)
-		batcher := gobatcher.NewBatcher().
-			WithRateLimiter(res).
-			WithFlushInterval(1 * time.Millisecond)
-		var mu sync.Mutex
-		var max int
-		res.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.TargetEvent:
-				mu.Lock()
-				defer mu.Unlock()
-				if val > max {
-					max = val
-				}
+func TestBatcher_NeedsCapacity_EnsureOperationCostsResultInTarget(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := &mockLeaseManager{}
+	mgr.On("RaiseEventsTo", mock.Anything).Once()
+	res := gobatcher.NewSharedResource().
+		WithSharedCapacity(10000, mgr).
+		WithFactor(1000)
+	batcher := gobatcher.NewBatcher().
+		WithRateLimiter(res).
+		WithFlushInterval(1 * time.Millisecond)
+	var mu sync.Mutex
+	var max int
+	res.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.TargetEvent:
+			mu.Lock()
+			defer mu.Unlock()
+			if val > max {
+				max = val
 			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			time.Sleep(400 * time.Millisecond)
-		})
-		var err error
-		op1 := gobatcher.NewOperation(watcher, 800, struct{}{}, false)
-		err = batcher.Enqueue(op1)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		op2 := gobatcher.NewOperation(watcher, 300, struct{}{}, false)
-		err = batcher.Enqueue(op2)
-		assert.NoError(t, err, "expecting no error on enqueue")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "expecting no error on start")
-		time.Sleep(200 * time.Millisecond)
-		mu.Lock()
-		defer mu.Unlock()
-		assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
-		mgr.AssertExpectations(t)
+		}
 	})
-
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		time.Sleep(400 * time.Millisecond)
+	})
+	var err error
+	op1 := gobatcher.NewOperation(watcher, 800, struct{}{}, false)
+	err = batcher.Enqueue(op1)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	op2 := gobatcher.NewOperation(watcher, 300, struct{}{}, false)
+	err = batcher.Enqueue(op2)
+	assert.NoError(t, err, "expecting no error on enqueue")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "expecting no error on start")
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1100, max, "expecting the request to be the sum of the operations")
+	mgr.AssertExpectations(t)
 }
 
 type pauseDurations struct {
@@ -397,8 +385,7 @@ type pauseDurations struct {
 	output int64
 }
 
-func TestBatcherPause(t *testing.T) {
-
+func TestBatcher_Pause_EnsurePauseLastsForExpectedDuration(t *testing.T) {
 	durations := []pauseDurations{
 		{id: "500 ms (default)", input: time.Duration(0), output: 500},
 		{id: "750 ms", input: 750 * time.Millisecond, output: 750},
@@ -441,205 +428,200 @@ func TestBatcherPause(t *testing.T) {
 			assert.GreaterOrEqual(t, len.Milliseconds(), duration.output, "expecting the pause to be at least %v ms", duration.output)
 		})
 	}
-
-	t.Run("ensure multiple pauses do not increase the time", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher()
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		wg := sync.WaitGroup{}
-		wg.Add(2)
-		var paused, resumed time.Time
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.PauseEvent:
-				paused = time.Now()
-				wg.Done()
-			case gobatcher.ResumeEvent:
-				resumed = time.Now()
-				wg.Done()
-			}
-		})
-		batcher.Pause()
-		time.Sleep(100 * time.Millisecond)
-		batcher.Pause()
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			wg.Wait()
-		}()
-		select {
-		case <-done:
-			// saw a pause and resume
-		case <-time.After(1 * time.Second):
-			assert.Fail(t, "expected to be resumed before now")
-		}
-		len := resumed.Sub(paused)
-		assert.GreaterOrEqual(t, len.Milliseconds(), int64(500), "expecting the pause to be at least 500 ms")
-		assert.Less(t, len.Milliseconds(), int64(600), "expecting the pause to be under 600 ms")
-	})
-
-	t.Run("ensure negative duration uses 500 ms (default)", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithPauseTime(-100 * time.Millisecond)
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		wg := sync.WaitGroup{}
-		wg.Add(2)
-		var paused, resumed time.Time
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.PauseEvent:
-				paused = time.Now()
-				wg.Done()
-			case gobatcher.ResumeEvent:
-				resumed = time.Now()
-				wg.Done()
-			}
-		})
-		batcher.Pause()
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			wg.Wait()
-		}()
-		select {
-		case <-done:
-			// saw a pause and resume
-		case <-time.After(1 * time.Second):
-			assert.Fail(t, "expected to be resumed before now")
-		}
-		len := resumed.Sub(paused)
-		assert.GreaterOrEqual(t, len.Milliseconds(), int64(500), "expecting the pause to be at least 500 ms")
-		assert.Less(t, len.Milliseconds(), int64(600), "expecting the pause to be under 600 ms")
-	})
-
-	t.Run("ensure no processing happens during a pause", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher()
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		wg := sync.WaitGroup{}
-		wg.Add(2)
-		resumed := false
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.ResumeEvent:
-				resumed = true
-				wg.Done()
-			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			assert.True(t, resumed, "all batches should be raised after resume")
-			wg.Done()
-		})
-		batcher.Pause()
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err = batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			wg.Wait()
-		}()
-		select {
-		case <-done:
-			// saw a pause and resume
-		case <-time.After(1 * time.Second):
-			assert.Fail(t, "expected to be completed before now")
-		}
-		assert.True(t, resumed, "expecting the pause to have resumed")
-	})
-
 }
 
-func TestBatcherStart(t *testing.T) {
-
-	t.Run("start is callable only once", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher()
-		var err1, err2 error
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			err1 = batcher.Start(ctx)
+func TestBatcher_Pause_EnsureMultiplePausesDoNotIncreaseTheTime(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher()
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	var paused, resumed time.Time
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.PauseEvent:
+			paused = time.Now()
 			wg.Done()
-		}()
-		go func() {
-			err2 = batcher.Start(ctx)
+		case gobatcher.ResumeEvent:
+			resumed = time.Now()
 			wg.Done()
-		}()
-		wg.Wait()
-		if err1 != nil {
-			assert.Equal(t, gobatcher.ImproperOrderError, err1)
-		} else if err2 != nil {
-			assert.Equal(t, gobatcher.ImproperOrderError, err2)
-		} else {
-			t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
 		}
 	})
-
-	t.Run("ensure that mixed operations are batched or not as appropriate", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher()
-		var err error
-		wg := sync.WaitGroup{}
-		wg.Add(2)
-		var op1, op2, op3 gobatcher.Operation
-		var count uint32 = 0
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			atomic.AddUint32(&count, uint32(len(batch)))
-			switch len(batch) {
-			case 1:
-				assert.Equal(t, op2, batch[0], "expect that the batch has op2")
-			case 2:
-				assert.Equal(t, op1, batch[0], "expect that the batch has op1 and op3")
-				assert.Equal(t, op3, batch[1], "expect that the batch has op1 and op3")
-			}
-			wg.Done()
-		})
-		op1 = gobatcher.NewOperation(watcher, 100, struct{}{}, true)
-		err = batcher.Enqueue(op1)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		op2 = gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err = batcher.Enqueue(op2)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		op3 = gobatcher.NewOperation(watcher, 100, struct{}{}, true)
-		err = batcher.Enqueue(op3)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting an startup error")
+	batcher.Pause()
+	time.Sleep(100 * time.Millisecond)
+	batcher.Pause()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
 		wg.Wait()
-		assert.Equal(t, uint32(3), count, "expect 3 operations to be completed")
-	})
+	}()
+	select {
+	case <-done:
+		// saw a pause and resume
+	case <-time.After(1 * time.Second):
+		assert.Fail(t, "expected to be resumed before now")
+	}
+	len := resumed.Sub(paused)
+	assert.GreaterOrEqual(t, len.Milliseconds(), int64(500), "expecting the pause to be at least 500 ms")
+	assert.Less(t, len.Milliseconds(), int64(600), "expecting the pause to be under 600 ms")
+}
 
-	t.Run("ensure full batches are flushed", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond)
-		var count uint32 = 0
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			atomic.AddUint32(&count, 1)
-			assert.Equal(t, 3, len(batch), "expect batches to have 3 operations each")
-		}).WithMaxBatchSize(3)
-		for i := 0; i < 9; i++ {
-			op := gobatcher.NewOperation(watcher, 100, struct{}{}, true)
-			err := batcher.Enqueue(op)
-			assert.NoError(t, err, "not expecting an enqueue error")
+func TestBatcher_Pause_EnsureNegativeDurationUses500ms_Default(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithPauseTime(-100 * time.Millisecond)
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	var paused, resumed time.Time
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.PauseEvent:
+			paused = time.Now()
+			wg.Done()
+		case gobatcher.ResumeEvent:
+			resumed = time.Now()
+			wg.Done()
 		}
-		err := batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting an startup error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Equal(t, uint32(3), atomic.LoadUint32(&count), "expect 3 batches")
 	})
+	batcher.Pause()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+		// saw a pause and resume
+	case <-time.After(1 * time.Second):
+		assert.Fail(t, "expected to be resumed before now")
+	}
+	len := resumed.Sub(paused)
+	assert.GreaterOrEqual(t, len.Milliseconds(), int64(500), "expecting the pause to be at least 500 ms")
+	assert.Less(t, len.Milliseconds(), int64(600), "expecting the pause to be under 600 ms")
+}
 
+func TestBatcher_Pause_EnsureNoProcessingHappensDuringAPause(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher()
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	resumed := false
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.ResumeEvent:
+			resumed = true
+			wg.Done()
+		}
+	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		assert.True(t, resumed, "all batches should be raised after resume")
+		wg.Done()
+	})
+	batcher.Pause()
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err = batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+	select {
+	case <-done:
+		// saw a pause and resume
+	case <-time.After(1 * time.Second):
+		assert.Fail(t, "expected to be completed before now")
+	}
+	assert.True(t, resumed, "expecting the pause to have resumed")
+}
+
+func TestBatcher_Start_IsCallableOnlyOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher()
+	var err1, err2 error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		err1 = batcher.Start(ctx)
+		wg.Done()
+	}()
+	go func() {
+		err2 = batcher.Start(ctx)
+		wg.Done()
+	}()
+	wg.Wait()
+	if err1 != nil {
+		assert.Equal(t, gobatcher.ImproperOrderError, err1)
+	} else if err2 != nil {
+		assert.Equal(t, gobatcher.ImproperOrderError, err2)
+	} else {
+		t.Errorf("expected one of the two calls to fail (err1: %v) (err2: %v)", err1, err2)
+	}
+}
+
+func TestBatcher_Start_EnsureThatMixedOperationsAreBatchedOrNotAsAppropriate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher()
+	var err error
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	var op1, op2, op3 gobatcher.Operation
+	var count uint32 = 0
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		atomic.AddUint32(&count, uint32(len(batch)))
+		switch len(batch) {
+		case 1:
+			assert.Equal(t, op2, batch[0], "expect that the batch has op2")
+		case 2:
+			assert.Equal(t, op1, batch[0], "expect that the batch has op1 and op3")
+			assert.Equal(t, op3, batch[1], "expect that the batch has op1 and op3")
+		}
+		wg.Done()
+	})
+	op1 = gobatcher.NewOperation(watcher, 100, struct{}{}, true)
+	err = batcher.Enqueue(op1)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	op2 = gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err = batcher.Enqueue(op2)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	op3 = gobatcher.NewOperation(watcher, 100, struct{}{}, true)
+	err = batcher.Enqueue(op3)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting an startup error")
+	wg.Wait()
+	assert.Equal(t, uint32(3), count, "expect 3 operations to be completed")
+}
+
+func TestBatcher_Start_EnsureFullBatchesAreFlushed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond)
+	var count uint32 = 0
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		atomic.AddUint32(&count, 1)
+		assert.Equal(t, 3, len(batch), "expect batches to have 3 operations each")
+	}).WithMaxBatchSize(3)
+	for i := 0; i < 9; i++ {
+		op := gobatcher.NewOperation(watcher, 100, struct{}{}, true)
+		err := batcher.Enqueue(op)
+		assert.NoError(t, err, "not expecting an enqueue error")
+	}
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting an startup error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, uint32(3), atomic.LoadUint32(&count), "expect 3 batches")
 }
 
 func TestBatcher_Shutdown(t *testing.T) {
@@ -679,8 +661,7 @@ type capacityIntervalTest struct {
 	expect   uint32
 }
 
-func TestTimers(t *testing.T) {
-
+func TestBatcher_Timers_EnsureOperationsAreFlushedInExpectedTimes(t *testing.T) {
 	flushIntervalTests := []flushIntervalTest{
 		{id: "-200ms (default to 100)", interval: -200 * time.Millisecond, enqueue: 4, wait: 250 * time.Millisecond, expect: 2},
 		{id: "100ms (default)", interval: 0 * time.Millisecond, enqueue: 4, wait: 250 * time.Millisecond, expect: 2},
@@ -711,7 +692,9 @@ func TestTimers(t *testing.T) {
 			assert.Equal(t, d.expect, atomic.LoadUint32(&count), "expecting %v operations to be completed given the %v interval and capacity for only a single operation", d.interval, d.expect)
 		})
 	}
+}
 
+func TestBatcher_Timers_EnsureCapacityRequestsAreRaisedInExpectedTimes(t *testing.T) {
 	capacityIntervalTests := []capacityIntervalTest{
 		{id: "-200ms (default to 100ms)", interval: 0 * time.Millisecond, wait: 250 * time.Millisecond, expect: 2},
 		{id: "100ms (default)", interval: 0 * time.Millisecond, wait: 250 * time.Millisecond, expect: 2},
@@ -749,215 +732,210 @@ func TestTimers(t *testing.T) {
 			mgr.AssertExpectations(t)
 		})
 	}
+}
 
-	t.Run("ensure long-running operations are still marked done (watcher)", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			// NOTE: simulate a long-running operation
-			time.Sleep(200 * time.Millisecond)
-		}).WithMaxOperationTime(50 * time.Millisecond)
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		before := batcher.NeedsCapacity()
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		after := batcher.NeedsCapacity()
-		assert.Equal(t, uint32(100), before, "expecting 100 capacity request before starting")
-		assert.Equal(t, uint32(0), after, "expecting 0 capacity request after max-operation-time")
-	})
-
-	t.Run("ensure long-running operations are still marked done (batcher)", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond).
-			WithMaxOperationTime(50 * time.Millisecond)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			// NOTE: simulate a long-running operation
-			time.Sleep(200 * time.Millisecond)
-		})
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		before := batcher.NeedsCapacity()
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		after := batcher.NeedsCapacity()
-		assert.Equal(t, uint32(100), before, "expecting 100 capacity request before starting")
-		assert.Equal(t, uint32(0), after, "expecting 0 capacity request after max-operation-time")
-	})
-
-	t.Run("ensure abandoned operations are not marked done before 1m default", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond)
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			// NOTE: simulate a long-running operation
-			time.Sleep(400 * time.Millisecond)
-		})
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		before := batcher.NeedsCapacity()
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
+func TestBatcher_Timers_EnsureLongRunningOperationsAreStillMarkedDone_Watcher(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond)
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		// NOTE: simulate a long-running operation
 		time.Sleep(200 * time.Millisecond)
-		after := batcher.NeedsCapacity()
-		assert.Equal(t, uint32(100), before, "expecting 100 capacity request before starting")
-		assert.Equal(t, uint32(100), after, "expecting 100 capacity request after 200 milliseconds")
-	})
-
+	}).WithMaxOperationTime(50 * time.Millisecond)
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	before := batcher.NeedsCapacity()
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	after := batcher.NeedsCapacity()
+	assert.Equal(t, uint32(100), before, "expecting 100 capacity request before starting")
+	assert.Equal(t, uint32(0), after, "expecting 0 capacity request after max-operation-time")
 }
 
-func TestAudit(t *testing.T) {
-
-	t.Run("demonstrate an audit-pass", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond).
-			WithAuditInterval(1 * time.Millisecond).
-			WithMaxOperationTime(1 * time.Millisecond)
-		var passed, failed uint32
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AuditPassEvent:
-				atomic.AddUint32(&passed, 1)
-			case gobatcher.AuditFailEvent:
-				atomic.AddUint32(&failed, 1)
-			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&passed), uint32(0), "expecting audit-pass because done() was called before max-operation-time (1m default)")
-		assert.Equal(t, uint32(0), atomic.LoadUint32(&failed), "expecting no audit-fail messages")
+func TestBatcher_TimersEnsureLongRunningOperationsAreStillMarkedDone_Batcher(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond).
+		WithMaxOperationTime(50 * time.Millisecond)
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		// NOTE: simulate a long-running operation
+		time.Sleep(200 * time.Millisecond)
 	})
-
-	t.Run("demonstrate an audit-fail (target)", func(t *testing.T) {
-		// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond).
-			WithAuditInterval(1 * time.Millisecond).
-			WithMaxOperationTime(1 * time.Millisecond)
-		var failed uint32
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnTarget {
-				atomic.AddUint32(&failed, 1)
-			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			time.Sleep(20 * time.Millisecond)
-		}).WithMaxOperationTime(1 * time.Minute)
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
-		assert.Equal(t, uint32(0), batcher.NeedsCapacity())
-	})
-
-	t.Run("demonstrate an audit-fail (inflight)", func(t *testing.T) {
-		// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond).
-			WithAuditInterval(1 * time.Millisecond).
-			WithMaxOperationTime(1 * time.Millisecond).
-			WithMaxConcurrentBatches(1) // ensures there can be inflight errors
-		var failed uint32
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnInflight {
-				atomic.AddUint32(&failed, 1)
-			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			time.Sleep(20 * time.Millisecond)
-		}).WithMaxOperationTime(1 * time.Minute)
-		op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
-		assert.Equal(t, uint32(0), batcher.Inflight())
-	})
-
-	t.Run("demonstrate an audit-fail (target & inflight)", func(t *testing.T) {
-		// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond).
-			WithAuditInterval(1 * time.Millisecond).
-			WithMaxOperationTime(1 * time.Millisecond).
-			WithMaxConcurrentBatches(1) // ensures there can be inflight errors
-		var failed uint32
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnTargetAndInflight {
-				atomic.AddUint32(&failed, 1)
-			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			time.Sleep(20 * time.Millisecond)
-		}).WithMaxOperationTime(1 * time.Minute)
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err := batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
-		assert.Equal(t, uint32(0), batcher.NeedsCapacity())
-		assert.Equal(t, uint32(0), batcher.Inflight())
-	})
-
-	t.Run("demonstrate an audit-skip", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		batcher := gobatcher.NewBatcher().
-			WithFlushInterval(1 * time.Millisecond).
-			WithAuditInterval(1 * time.Millisecond)
-		var skipped uint32
-		batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
-			switch event {
-			case gobatcher.AuditSkipEvent:
-				atomic.AddUint32(&skipped, 1)
-			}
-		})
-		watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
-			time.Sleep(20 * time.Millisecond)
-		})
-		var err error
-		op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
-		err = batcher.Enqueue(op)
-		assert.NoError(t, err, "not expecting an enqueue error")
-		err = batcher.Start(ctx)
-		assert.NoError(t, err, "not expecting a start error")
-		time.Sleep(100 * time.Millisecond)
-		assert.Greater(t, atomic.LoadUint32(&skipped), uint32(0), "expect that something in the buffer but max-operation-time is still valid, will cause skips")
-	})
-
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	before := batcher.NeedsCapacity()
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	after := batcher.NeedsCapacity()
+	assert.Equal(t, uint32(100), before, "expecting 100 capacity request before starting")
+	assert.Equal(t, uint32(0), after, "expecting 0 capacity request after max-operation-time")
 }
 
-func TestManualFlush(t *testing.T) {
+func TestBatcher_Timers_EnsureLongRunningOperationsAreNotMarkedDoneBefore1mDefault(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond)
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		// NOTE: simulate a long-running operation
+		time.Sleep(400 * time.Millisecond)
+	})
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	before := batcher.NeedsCapacity()
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(200 * time.Millisecond)
+	after := batcher.NeedsCapacity()
+	assert.Equal(t, uint32(100), before, "expecting 100 capacity request before starting")
+	assert.Equal(t, uint32(100), after, "expecting 100 capacity request after 200 milliseconds")
+}
+
+func TestBatcher_Audit_DemonstrateAnAuditPass(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond).
+		WithAuditInterval(1 * time.Millisecond).
+		WithMaxOperationTime(1 * time.Millisecond)
+	var passed, failed uint32
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.AuditPassEvent:
+			atomic.AddUint32(&passed, 1)
+		case gobatcher.AuditFailEvent:
+			atomic.AddUint32(&failed, 1)
+		}
+	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {})
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&passed), uint32(0), "expecting audit-pass because done() was called before max-operation-time (1m default)")
+	assert.Equal(t, uint32(0), atomic.LoadUint32(&failed), "expecting no audit-fail messages")
+}
+
+func TestBatcher_Audit_DemonstrateAnAuditFail_Target(t *testing.T) {
+	// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond).
+		WithAuditInterval(1 * time.Millisecond).
+		WithMaxOperationTime(1 * time.Millisecond)
+	var failed uint32
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnTarget {
+			atomic.AddUint32(&failed, 1)
+		}
+	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		time.Sleep(20 * time.Millisecond)
+	}).WithMaxOperationTime(1 * time.Minute)
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+	assert.Equal(t, uint32(0), batcher.NeedsCapacity())
+}
+
+func TestBatcher_Audit_DemonstrateAnAuditFail_InFlight(t *testing.T) {
+	// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond).
+		WithAuditInterval(1 * time.Millisecond).
+		WithMaxOperationTime(1 * time.Millisecond).
+		WithMaxConcurrentBatches(1) // ensures there can be inflight errors
+	var failed uint32
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnInflight {
+			atomic.AddUint32(&failed, 1)
+		}
+	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		time.Sleep(20 * time.Millisecond)
+	}).WithMaxOperationTime(1 * time.Minute)
+	op := gobatcher.NewOperation(watcher, 0, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+	assert.Equal(t, uint32(0), batcher.Inflight())
+}
+
+func TestBatcher_Audit_DemonstrateAnAuditFail_TargetAndInFlight(t *testing.T) {
+	// NOTE: this sets a batcher max-op-time to 1ms and a watcher max-op-time to 1m allowing for the batch to be around longer than it thinks it should be
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond).
+		WithAuditInterval(1 * time.Millisecond).
+		WithMaxOperationTime(1 * time.Millisecond).
+		WithMaxConcurrentBatches(1) // ensures there can be inflight errors
+	var failed uint32
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		if event == gobatcher.AuditFailEvent && msg == gobatcher.AuditMsgFailureOnTargetAndInflight {
+			atomic.AddUint32(&failed, 1)
+		}
+	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		time.Sleep(20 * time.Millisecond)
+	}).WithMaxOperationTime(1 * time.Minute)
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err := batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&failed), uint32(0), "expecting an audit failure because done() was not called and max-operation-time was exceeded")
+	assert.Equal(t, uint32(0), batcher.NeedsCapacity())
+	assert.Equal(t, uint32(0), batcher.Inflight())
+}
+
+func TestBatcher_Audit_DemonstrateAnAuditSkip(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batcher := gobatcher.NewBatcher().
+		WithFlushInterval(1 * time.Millisecond).
+		WithAuditInterval(1 * time.Millisecond)
+	var skipped uint32
+	batcher.AddListener(func(event string, val int, msg string, metadata interface{}) {
+		switch event {
+		case gobatcher.AuditSkipEvent:
+			atomic.AddUint32(&skipped, 1)
+		}
+	})
+	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+		time.Sleep(20 * time.Millisecond)
+	})
+	var err error
+	op := gobatcher.NewOperation(watcher, 100, struct{}{}, false)
+	err = batcher.Enqueue(op)
+	assert.NoError(t, err, "not expecting an enqueue error")
+	err = batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	time.Sleep(100 * time.Millisecond)
+	assert.Greater(t, atomic.LoadUint32(&skipped), uint32(0), "expect that something in the buffer but max-operation-time is still valid, will cause skips")
+}
+
+func TestBatcher_ManualFlush(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var err error
@@ -996,7 +974,7 @@ func (s *TestMaxConcurrentBatchesSuite) BeforeTest(suiteName, testName string) {
 		WithEmitBatch().
 		WithEmitFlush()
 	switch testName {
-	case "TestBatchPacking":
+	case "TestBatcher_BatchPacking":
 		s.batcher.WithMaxConcurrentBatches(1)
 	default:
 		s.batcher.WithMaxConcurrentBatches(2)
@@ -1018,7 +996,7 @@ func (s *TestMaxConcurrentBatchesSuite) TearDownTest() {
 	s.cancel()
 }
 
-func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforced() {
+func (s *TestMaxConcurrentBatchesSuite) TestBatcher_ConcurrencyIsEnforced() {
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 		atomic.AddUint32(&batches, 1)
@@ -1037,7 +1015,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforced() {
 	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
 }
 
-func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforcedWithBatchable() {
+func (s *TestMaxConcurrentBatchesSuite) TestBatcher_ConcurrencyIsEnforcedWithBatchable() {
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 		atomic.AddUint32(&batches, 1)
@@ -1056,7 +1034,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestConcurrencyIsEnforcedWithBatchable()
 	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
 }
 
-func (s *TestMaxConcurrentBatchesSuite) TestSlotsAreAvailableOnDone() {
+func (s *TestMaxConcurrentBatchesSuite) TestBatcher_SlotsAreAvailableOnDone() {
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 		atomic.AddUint32(&batches, 1)
@@ -1080,7 +1058,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestSlotsAreAvailableOnDone() {
 	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
 }
 
-func (s *TestMaxConcurrentBatchesSuite) TestRunningOpHoldsSlot() {
+func (s *TestMaxConcurrentBatchesSuite) TestBatcher_RunningOpHoldsSlot() {
 	var batches uint32
 	watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 		atomic.AddUint32(&batches, 1)
@@ -1102,7 +1080,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestRunningOpHoldsSlot() {
 	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
 }
 
-func (s *TestMaxConcurrentBatchesSuite) TestBatchPacking() {
+func (s *TestMaxConcurrentBatchesSuite) TestBatcher_BatchPacking() {
 	var err error
 	var batches uint32
 	watcher1 := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
@@ -1129,7 +1107,7 @@ func (s *TestMaxConcurrentBatchesSuite) TestBatchPacking() {
 	s.Equal(uint32(1), s.batcher.OperationsInBuffer())
 }
 
-func TestMaxConcurrentBatches(t *testing.T) {
+func TestBatcher_MaxConcurrentBatches(t *testing.T) {
 	suite.Run(t, new(TestMaxConcurrentBatchesSuite))
 }
 

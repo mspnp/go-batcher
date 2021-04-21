@@ -84,7 +84,7 @@ func (e StorageError) Response() *http.Response {
 	return nil
 }
 
-func TestAzureLeaseManager_ProvisionWithCreated(t *testing.T) {
+func TestAzureBlobLeaseManager_ProvisionWithCreated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := &mockEventer{}
@@ -99,7 +99,7 @@ func TestAzureLeaseManager_ProvisionWithCreated(t *testing.T) {
 	e.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_ProvisionWithVerified(t *testing.T) {
+func TestAzureBlobLeaseManager_ProvisionWithVerified(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := &mockEventer{}
@@ -115,7 +115,7 @@ func TestAzureLeaseManager_ProvisionWithVerified(t *testing.T) {
 	e.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_ProvisionWithUnrelatedStorageError(t *testing.T) {
+func TestAzureBlobLeaseManager_ProvisionWithUnrelatedStorageError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	container := &mockContainer{}
@@ -127,7 +127,7 @@ func TestAzureLeaseManager_ProvisionWithUnrelatedStorageError(t *testing.T) {
 	container.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_ProvisionWithNonStorageError(t *testing.T) {
+func TestAzureBlobLeaseManager_ProvisionWithNonStorageError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	container := &mockContainer{}
@@ -139,7 +139,7 @@ func TestAzureLeaseManager_ProvisionWithNonStorageError(t *testing.T) {
 	container.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_ProvisionWithInvalidMasterKey(t *testing.T) {
+func TestAzureBlobLeaseManager_ProvisionWithInvalidMasterKey(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := newMockAzureBlobLeaseManager("accountName", "containerName", "masterKey", nil, nil)
@@ -147,7 +147,7 @@ func TestAzureLeaseManager_ProvisionWithInvalidMasterKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "illegal base64 data")
 }
 
-func TestAzureLeaseManager_ProvisionWithInvalidUrl(t *testing.T) {
+func TestAzureBlobLeaseManager_ProvisionWithInvalidUrl(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr := newMockAzureBlobLeaseManager("accoun\tName", "containerName", "", nil, nil)
@@ -155,7 +155,7 @@ func TestAzureLeaseManager_ProvisionWithInvalidUrl(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid control character in URL")
 }
 
-func TestAzureLeaseManager_CorrectNumberOfPartitionsCreated(t *testing.T) {
+func TestAzureBlobLeaseManager_CorrectNumberOfPartitionsCreated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := &mockEventer{}
@@ -170,7 +170,7 @@ func TestAzureLeaseManager_CorrectNumberOfPartitionsCreated(t *testing.T) {
 	e.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_BlobCanBeVerified(t *testing.T) {
+func TestAzureBlobLeaseManager_BlobCanBeVerified(t *testing.T) {
 	testCases := map[string]azblob.StorageError{
 		"exists": StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists},
 		"leased": StorageError{serviceCode: azblob.ServiceCodeLeaseIDMissing},
@@ -193,7 +193,7 @@ func TestAzureLeaseManager_BlobCanBeVerified(t *testing.T) {
 	}
 }
 
-func TestAzureLeaseManager_BlobWithErrors(t *testing.T) {
+func TestAzureBlobLeaseManager_BlobWithErrors(t *testing.T) {
 	testCases := map[string]error{
 		"unrelated":   StorageError{serviceCode: azblob.ServiceCodeAuthenticationFailed},
 		"non-storage": errors.New("non-storage error"),
@@ -216,7 +216,7 @@ func TestAzureLeaseManager_BlobWithErrors(t *testing.T) {
 	}
 }
 
-func TestAzureLeaseManager_LeaseSuccess(t *testing.T) {
+func TestAzureBlobLeaseManager_LeaseSuccess(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	blob := &mockBlob{}
@@ -227,7 +227,7 @@ func TestAzureLeaseManager_LeaseSuccess(t *testing.T) {
 	blob.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_LeaseFailed(t *testing.T) {
+func TestAzureBlobLeaseManager_LeaseFailed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := &mockEventer{}
@@ -243,7 +243,7 @@ func TestAzureLeaseManager_LeaseFailed(t *testing.T) {
 	e.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_LeaseError(t *testing.T) {
+func TestAzureBlobLeaseManager_LeaseError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := &mockEventer{}
@@ -259,7 +259,7 @@ func TestAzureLeaseManager_LeaseError(t *testing.T) {
 	e.AssertExpectations(t)
 }
 
-func TestAzureLeaseManager_LeaseUnrelatedError(t *testing.T) {
+func TestAzureBlobLeaseManager_LeaseUnrelatedError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	e := &mockEventer{}
