@@ -5,8 +5,8 @@ Events are raised with a "name" (string), "val" (int), and "msg" (*string).
 ## Events raised by Batcher
 
 The following events can be raised by Batcher...
-
-- __shutdown__: This is raised after Stop() is called on a Batcher instance.
+<!-- TODO: Review shutdown-->
+- __shutdown__: This is raised when the context is cancelled.
 
 - __pause__: This is raised after Pause() is called on a Batcher instance. The val is the number of milliseconds that it was paused for.
 
@@ -24,19 +24,19 @@ The following events can be raised by Batcher...
 
 - __flush-done__: This is raised only when WithEmitFlush has been added to Batcher. It is raised at the FlushInterval when the flush is completed. There is no security concern with event, it is disabled by default because it raises every 100ms by default.
 
-## Events raised by ProvisionedResource and AzureSharedResource
+<!-- TODO: LeaseManager events-->
 
-The following events can be raised by ProvisionedResource and AzureSharedResource...
+## Events raised by SharedResource
 
-- __shutdown__: This is raised after Stop() is called on a rate limiter instance.
+<!-- TODO: Review shutdown + Are we missing provisionstart and provisiondone events here? -->
+
+The following events can be raised by SharedResource...
+
+- __shutdown__: This is raised when the context is cancelled.
 
 - __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
 
 - __batch__: This is raised only when WithEmitBatch has been added to Batcher and whenever a batch is raised to any Watcher. The val is the count of the operations in the batch. The metadata contains an array of all Operations in the batch. Enabling this event creates a potential security issue as it would allow any block of code with access to the Batcher to see Operations for Watchers the code didn't create.
-
-## Events raised by AzureSharedResource
-
-In addition, the following events can be raised by AzureSharedResource...
 
 - __failed__: This is raised if the rate limiter fails to procure capacity. This does not indicate an error condition, it is expected that attempts to procure additional capacity will have failures. The val is the index of the partition that was not obtained.
 

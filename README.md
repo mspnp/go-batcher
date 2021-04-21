@@ -81,11 +81,7 @@ Batcher use cases are not limited to datastores. Consider the scenario where you
 
 - __Operation__: Operations are enqueued into the Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
 
-There are also 2 rate limiters provided out-of-the-box...
-
-- __ProvisionedResource__: This is a simple rate limiter that has a fixed capacity per second.
-
-- __AzureSharedResource__: This rate limiter allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. An Azure Storage Account is used as the capacity lease management system.
+- __SharedResource__: This is a rate limiter that allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. An Azure Storage Account is used as the capacity lease management system when SharedCapacity is set.
 
 ![topology](./docs/images/topology.png)
 
@@ -93,22 +89,20 @@ There are also 2 rate limiters provided out-of-the-box...
 
 Some other terms will be used throughout...
 
-- __Instance__: Using AzureSharedResource, you can share the capacity of a datastore across different processes, containers, servers, Pod replicas, etc. Hereafter, these separate entities will be refered to as Instances.
+- __Instance__: Using SharedResource, you can share the capacity of a datastore across different processes, containers, servers, Pod replicas, etc. Hereafter, these separate entities will be refered to as Instances.
 
 - __Target__: As Operations are enqueued or marked done in Batcher it updates a Target number which is the total cost Batcher thinks is necessary to process any outstanding Operations. In other words, as Operations are enqueued, the Target grows by the cost of that Operation. When a batch is marked done, the Target is reduced by the cost of all Operations in that batch.
 
 - __Capacity__: The capacity that the rate limiter has been able to procure is available via the Capacity() method or the capacity event.
 
 - __MaxCapacity__: When using a rate limiter, the MaxCapacity is the maximum capacity that could even be provided.
-  For the rate limiter AzureSharedResource, this is the total of SharedCapacity and ReservedCapacity.
+  For the rate limiter SharedResource, this is the total of SharedCapacity and ReservedCapacity.
 
-  - __SharedCapacity__: AzureSharedResource has a SharedCapacity which is defined when NewAzureSharedResource() is called. This is the capacity for the datastore that is shared across any number of Instances. In the most simple case, if a Cosmos database had 20K RU and 4 Instances of the service using it, you might specify the SharedCapacity as 20K on each Instance if you want all the capacity shared. SharedCapacity reduces cost.
+  - __SharedCapacity__: SharedResource has a SharedCapacity which is defined when NewSharedResource() is called. This is the capacity for the datastore that is shared across any number of Instances. In the most simple case, if a Cosmos database had 20K RU and 4 Instances of the service using it, you might specify the SharedCapacity as 20K on each Instance if you want all the capacity shared. SharedCapacity reduces cost.
 
-  - __ReservedCapacity__: AzureSharedResource optionally allows you to specify a ReservedCapacity that will only be used by this Instance. For example, in the above example, if you wanted to reserve 2K RU for each of your Instances, you might use a ReservedCapacity of 2K (on each of 4 Instances) and then use 12K for the SharedCapacity. ReservedCapacity reduces latency.
+  - __ReservedCapacity__: SharedResource optionally allows you to specify a ReservedCapacity that will only be used by this Instance. For example, in the above example, if you wanted to reserve 2K RU for each of your Instances, you might use a ReservedCapacity of 2K (on each of 4 Instances) and then use 12K for the SharedCapacity. ReservedCapacity reduces latency.
 
-  For the rate limiter ProvisionedResource, this is the MaxCapacity that was provided when New() was called.
-
-- __Partitions__: The AzureSharedResource rate limiter divides the SharedCapacity by a factor to determine the number of partitions to provision as blobs. If a process owns the exclusive lease on the partition blob, then it is allowed to use 1 factor of capacity. For example, if the SharedCapacity is 10K and the factor is 1K, then there are 10 partitions, control of each is worth 1K capacity.
+- __Partitions__: The SharedResource rate limiter divides the SharedCapacity by a factor to determine the number of partitions to provision as blobs. If a process owns the exclusive lease on the partition blob, then it is allowed to use 1 factor of capacity. For example, if the SharedCapacity is 10K and the factor is 1K, then there are 10 partitions, control of each is worth 1K capacity.
 
 - __Inflight__: The number of batches that are currently being processed (i.e. the batch has been raised to the callback function on the Watcher, but has not not completed that function yet).
 
@@ -120,9 +114,9 @@ Some other terms will be used throughout...
 
 - __Rate Limiting__: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
 
-- __Shared Capacity__: Batcher supports using a rate limiter. One of the included rate limiters is AzureSharedResource which allows for sharing capacity across multiple Instances. Sharing capacity in this way can reduce cost.
+- __Shared Capacity__: Batcher supports using a rate limiter. One of the included rate limiters is SharedResource which allows for sharing capacity across multiple Instances. Sharing capacity in this way can reduce cost.
 
-- __Reserved Capacity__: AzureSharedResource also supports a reserved capacity to improve latency. For instance, you might have 4 Instances that need to share 20K RU in a Cosmos database. You might give each 2K reserved capacity and share the remaining 14K RU. This gives each process low latency up to 2K RU but allows each process to request more.
+- __Reserved Capacity__: SharedResource also supports a reserved capacity to improve latency. For instance, you might have 4 Instances that need to share 20K RU in a Cosmos database. You might give each 2K reserved capacity and share the remaining 14K RU. This gives each process low latency up to 2K RU but allows each process to request more.
 
 - __Cost per Operation__: Each Operation that you enqueue to Batcher will have an associated cost.
 
@@ -162,15 +156,17 @@ import (
 )
 
 func main() {
+    ctx := context.Background()
 
     // start getting shared resource capacity
-    azresource := gobatcher.NewAzureSharedResource(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, uint32(CAPACITY)).
-        WithMasterKey(AZBLOB_KEY).
+    leaseMgr := gobatcher.NewAzureBlobLeaseManager(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, AZBLOB_KEY)
+    azresource := gobatcher.NewSharedResource().
+        WithSharedCapacity(uint32(CAPACITY), leaseMgr).
         WithFactor(1000)
     resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
         switch event {
         case gobatcher.ErrorsEvent:
-            log.Err(errors.New(msg)).Msgf("AzureSharedResource raised the following error...")
+            log.Err(errors.New(msg)).Msgf("SharedResource raised the following error...")
         }
     })
     defer azresource.RemoveListener(resourceListener)
@@ -193,7 +189,7 @@ func main() {
         }
     })
     defer batcher.RemoveListener(batcherListener)
-    if err := batcher.Start(); err != nil {
+    if err := batcher.Start(ctx); err != nil {
         panic(err)
     }
 
@@ -246,11 +242,11 @@ There are several ways to facilitate unit testing when using Batcher. Detailed d
 
 ## Rate Limiting
 
-The AzureSharedResource rate limiter works like this...
+The SharedResource rate limiter works like this...
 
 ![lease](./docs/images/lease.png)
 
-The ProvisionedResource plugs into Batcher the same way, but its capacity never changes and it has no dependency on Azure Blob Storage.
+When there is only ReservedCapacity and no SharedCapacity is set, there is no dependency on Azure Blob Storage.
 
 ### Scenarios
 
@@ -264,7 +260,7 @@ There are a couple of scenarios I want to call attention to...
 
 Traditionally if you want to run multiple instances of a service, you might provision capacity in your datastore times the number of instances. For example, in Azure Cosmos, if you need 20K RU and have 4 instances, you might provision 80K RU to ensure that any node could operate at maximum capacity.
 
-Using AzureSharedResource, you might still reserve capacity per instance, but it can be a small amount. You can then share capacity across the instances. For instance, in the same scenario, you might reserve 2K RU for the 4 instances and (minimally) share an addition 18K RU.
+Using SharedResource, you might still reserve capacity per instance, but it can be a small amount. You can then share capacity across the instances. For instance, in the same scenario, you might reserve 2K RU for the 4 instances and (minimally) share an addition 18K RU.
 
 ![reserved-shared-capacity](./docs/images/reserved-shared-capacity.png)
 To give a cost comparison with retail pricing in the East US region with 1 TB of capacity:
@@ -274,7 +270,7 @@ To give a cost comparison with retail pricing in the East US region with 1 TB of
 
 ### Cost Increase
 
-Using default settings, each instance of AzureSharedResource will make a single storage transaction roughly every 250 milliseconds _when it needs additional capacity_. Therefore, we can determine the maximum cost for 4 instances on an Azure Storage Account GPv2 (or Blob) as...
+Using default settings, each instance of SharedResource will make a single storage transaction roughly every 250 milliseconds _when it needs additional capacity_. Therefore, we can determine the maximum cost for 4 instances on an Azure Storage Account GPv2 (or Blob) as...
 
 `(4 processes) x (4 lease operations per second) x (60 seconds per minute) x (60 minutes per hour) x 730 (hours per month) / (10,000 operations per billing unit) * ($0.004 per billing unit) = ~$168 month`
 
@@ -282,7 +278,7 @@ However, this is a maximum cost - actual costs in many cases will be much lower 
 
 ### Changing Capacity
 
-Both rate limiters support changing capacity after Start(). For ProvisionedResource, you can call `SetCapacity(newcap)`. For AzureSharedResource, you can call `SetSharedCapacity(newcap)` and `SetReservedCapacity(newcap)`. If you change SharedCapacity, to a higher value than previously seen, realize it will need to provision blobs (per SharedCapacity divided by Factor) before it can return to its normal cycle of procuring partitions for capacity.
+The SharedResource rate limiter supports changing capacity after Start(). You can call `SetSharedCapacity(newcap)` and `SetReservedCapacity(newcap)`. If you change SharedCapacity, to a higher value than previously seen, realize it will need to provision blobs (per SharedCapacity divided by Factor) before it can return to its normal cycle of procuring partitions for capacity.
 
 ## Determining Cost
 

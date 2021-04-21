@@ -75,25 +75,25 @@ func main() {
 	resourceListener := azresource.AddListener(func(event string, val int, msg string, metadata interface{}) {
 		switch event {
 		case gobatcher.ShutdownEvent:
-			log.Debug().Msgf("AzureSharedResource shutdown.")
+			log.Debug().Msgf("SharedResource shutdown.")
 		case gobatcher.CapacityEvent:
-			log.Trace().Msgf("AzureSharedResource has procured %v capacity.", val)
+			log.Trace().Msgf("SharedResource has procured %v capacity.", val)
 		case gobatcher.FailedEvent:
-			log.Trace().Msgf("AzureSharedResource failed to take control of partition %v.", val)
+			log.Trace().Msgf("SharedResource failed to take control of partition %v.", val)
 		case gobatcher.ReleasedEvent:
-			log.Trace().Msgf("AzureSharedResource lost control of partition %v.", val)
+			log.Trace().Msgf("SharedResource lost control of partition %v.", val)
 		case gobatcher.AllocatedEvent:
-			log.Trace().Msgf("AzureSharedResource gained control of partition %v.", val)
+			log.Trace().Msgf("SharedResource gained control of partition %v.", val)
 		case gobatcher.ErrorEvent:
-			log.Err(errors.New(msg)).Msgf("AzureSharedResource raised the following error...")
+			log.Err(errors.New(msg)).Msgf("SharedResource raised the following error...")
 		case gobatcher.CreatedContainerEvent:
-			log.Trace().Msgf("AzureSharedResource created container %v.", msg)
+			log.Trace().Msgf("SharedResource created container %v.", msg)
 		case gobatcher.VerifiedContainerEvent:
-			log.Trace().Msgf("AzureSharedResource verified that container %v already exists.", msg)
+			log.Trace().Msgf("SharedResource verified that container %v already exists.", msg)
 		case gobatcher.CreatedBlobEvent:
-			log.Trace().Msgf("AzureSharedResource created blob %v.", val)
+			log.Trace().Msgf("SharedResource created blob %v.", val)
 		case gobatcher.VerifiedBlobEvent:
-			log.Trace().Msgf("AzureSharedResource verified that blob %v already exists.", val)
+			log.Trace().Msgf("SharedResource verified that blob %v already exists.", val)
 		}
 	})
 	defer azresource.RemoveListener(resourceListener)

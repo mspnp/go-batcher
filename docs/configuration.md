@@ -3,8 +3,7 @@
 - [Batcher Configuration](#batcher-configuration)
 - [Operation Configuration](#operation-configuration)
 - [Watcher Configuration](#watcher-configuration)
-- [ProvisionedResource Configuration](#ProvisionedResource-configuration)
-- [AzureSharedResource Configuration](#AzureSharedResource-configuration)
+- [SharedResource Configuration](#SharedResource-configuration)
 
 ## Batcher Configuration
 
@@ -34,7 +33,7 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
 
 - __WithFlushInterval__ [DEFAULT: 100ms]: This determines how often Operations in the buffer are examined. Each time the interval fires, Operations will be dequeued and added to batches or released individually (if not batchable) until such time as the aggregate cost of everything considered in the interval exceeds the capacity allotted this timeslice. For the 100ms default, there will be 10 intervals per second, so the capacity allocated is 1/10th the available capacity. Generally you want FlushInterval to be under 1 second though it could technically go higher.
 
-- __WithCapacityInterval__ [DEFAULT: 100ms]: This determines how often the Batcher asks the rate limiter for capacity. Generally you should leave this alone, and the implementation of what the rate limiter does when Batcher asks it for capacity could be different. For example, when using an AzureSharedResource rate limiter, you could increase it to slow down the number of storage Operations required for sharing capacity. Please be aware that this only applies to Batcher asking for capacity, it doesn't mean the rate limiter will allocate capacity any faster, just that it is being asked more often.
+- __WithCapacityInterval__ [DEFAULT: 100ms]: This determines how often the Batcher asks the rate limiter for capacity. Generally you should leave this alone, and the implementation of what the rate limiter does when Batcher asks it for capacity could be different. For example, when using an SharedResource rate limiter, you could increase it to slow down the number of storage Operations required for sharing capacity. Please be aware that this only applies to Batcher asking for capacity, it doesn't mean the rate limiter will allocate capacity any faster, just that it is being asked more often.
 
 - __WithAuditInterval__ [DEFAULT: 10s]: This determines how often the Target is audited to ensure it is accurate. The Target is manipulated with atomic Operations and abandoned batches are cleaned up after MaxOperationTime so Target should always be accurate. Therefore, we should expect to only see "audit-pass" and "audit-skip" events. This audit interval is a failsafe that if the buffer is empty and the MaxOperationTime (on Batcher only; Watchers are ignored) is exceeded and the Target is greater than zero, it is reset and an "audit-fail" event is raised. Since Batcher is a long-lived process, this audit helps ensure a broken process does not monopolize SharedCapacity when it isn't needed.
 
@@ -50,7 +49,7 @@ batcher := gobatcher.NewBatcherWithBuffer(buffer).
 
 - __WithEmitBatch__ [OPTIONAL]: DO NOT USE IN PRODUCTION. For unit testing it may be useful to batches that are raised across all Watchers. Setting this flag causes a "batch" event to be emitted with the operations in a batch set as the metadata (see the sample). You would not want this in production because it will diminish performance but it will also allow anyone with access to the batcher to see operations raised whether they have access to the Watcher or not.
 
-After creation, you must call Start() on a Batcher to begin processing. You can enqueue Operations before starting if desired (though keep in mind that there is a Buffer size and you will fill it if the Batcher is not running). When you are done using a Batcher, you can Stop() it.
+After creation, you must call Start() on a Batcher to begin processing. You can enqueue Operations before starting if desired (though keep in mind that there is a Buffer size and you will fill it if the Batcher is not running).
 
 ## Operation Configuration
 
@@ -97,53 +96,32 @@ watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
 
 - __WithMaxOperationTime__ [OPTIONAL]: This determines how long the system should wait for the callback function to be completed on the batch before it assumes it is done and decreases the Target anyway. It is critical that the Target reflect the current cost of outstanding Operations. The MaxOperationTime ensures that a batch isn't orphaned and continues reserving capacity long after it is no longer needed. If MaxOperationTime is not provided on the Watcher, the Batcher MaxOperationTime is used.
 
-## ProvisionedResource configuration
+<!-- TODO: Review -->
+## SharedResource configuration
 
-Creating a new ProvisionedResource might look like this...
-
-```go
-resource := NewProvisionedResource(maxCapacity)
-```
-
-- __maxCapacity__ [REQUIRED]: To create a provisioned resource, you must provide the capacity. Since the ProvisionedResource is a fixed capacity rate limiter, this value serves as both MaxCapacity and Capacity.
-
-## AzureSharedResource configuration
-
-Creating a new AzureSharedResource might look like this...
+Creating a new SharedResource might look like this...
 
 ```go
-resource := gobatcher.NewAzureSharedResource("acountName", "containerName", sharedCapacity).
-    WithMasterKey("masterKey")
+resource := gobatcher.NewSharedResource().
+    WithReservedCapacity(100)
 ```
 
 Creating with all available configuration options might look like this...
 
 ```go
-watcher := gobatcher.NewAzureSharedResource("acountName", "containerName", sharedCapacity).
-    WithMasterKey("masterKey").
-    WithFactor(1000).
+resource := gobatcher.NewSharedResource().
     WithReservedCapacity(2000).
-    WithMaxInterval(1).
-    WithLeaseTime(15).
-    WithMocks(container, blob) // where container, blob are mocks that emulate an Azure Storage Account
+    WithSharedCapacity(2000, leaseManager).
+    WithFactor(1000).
+    WithMaxInterval(1)
 ```
 
-- __accountName__ [REQUIRED]: The account name of the Azure Storage Account that will host the zero-byte blobs that serve as partitions for capacity.
+- __WithReservedCapacity__ [OPTIONAL]: You could run SharedResource with only SharedCapacity, but then every time it needs to run a single operation, the latency of that operation would be increased by the time it takes to allocate a partition. To improve the latency of these one-off operations, you may reserve some capacity so it is always available. Generally, you would reserve a small capacity and share the bulk of the capacity.
 
-- __containerName__ [REQUIRED]: The container name that will host the zero-byte blobs that serve as partitions for capacity.
+- __WithSharedCapacity__ [OPTIONAL]: To create a provisioned resource, you must provide the capacity that will be shared across all processes. Based on this and Factor, the correct number of partitions can be created in the Azure Storage Account. Expects LeaseManager.
 
-- __sharedCapacity__ [REQUIRED]: To create a provisioned resource, you must provide the capacity that will be shared across all processes. Based on this and Factor, the correct number of partitions can be created in the Azure Storage Account.
+- __WithFactor__ [DEFAULT: 1]: The SharedCapacity will be divided by the Factor (rounded up) to determine the number of partitions to create when Provision() is called. For example, if you have 10,200 of SharedCapacity and a Factor of 1000, then there will be 11 partitions. Whenever a partition is obtained by SharedResource, it will be worth a single Factor or 1000 RU. For predictability, the SharedCapacity should always be evenly divisible by Factor. SharedResource does not support more than 500 partitions.
 
-- __WithMasterKey__ [REQUIRED]: There needs to be some way to authenticate access to the Azure Storage Account, right now only master keys are supported. When other methods are supported, this will become optional, but you will always require one of the available methods.
+- __WithMaxInterval__ [DEFAULT: 500ms]: This determines the maximum time that the SharedResource will wait before attempting to allocate a new partition (if one is needed). The interval is random to improve entropy, but it won't be longer than this specified time. If you want fewer storage transactions, you could increase this time, but it would slow down how quickly the SharedResource can obtain new RUs.
 
-- __WithFactor__ [DEFAULT: 1]: The SharedCapacity will be divided by the Factor (rounded up) to determine the number of partitions to create when Provision() is called. For example, if you have 10,200 of SharedCapacity and a Factor of 1000, then there will be 11 partitions. Whenever a partition is obtained by AzureSharedResource, it will be worth a single Factor or 1000 RU. For predictability, the SharedCapacity should always be evenly divisible by Factor. AzureSharedResource does not support more than 500 partitions.
-
-- __WithReservedCapacity__ [OPTIONAL]: You could run AzureSharedResource with only SharedCapacity, but then every time it needs to run a single operation, the latency of that operation would be increased by the time it takes to allocate a partition. To improve the latency of these one-off operations, you may reserve some capacity so it is always available. Generally, you would reserve a small capacity and share the bulk of the capacity.
-
-- __WithMaxInterval__ [DEFAULT: 500ms]: This determines the maximum time that the AzureSharedResource will wait before attempting to allocate a new partition (if one is needed). The interval is random to improve entropy, but it won't be longer than this specified time. If you want fewer storage transactions, you could increase this time, but it would slow down how quickly the AzureSharedResource can obtain new RUs.
-
-- __WithLeaseTime__ [DEFAULT: 15s]: This allows you to specify how long you want a lease to be kept after it is obtained. This can be between 15-60s for Azure or any value if provisioned WithMocks(). Generally you should leave this at the default.
-
-- __WithMocks__ [OPTIONAL]: For unit testing, you can pass mocks to AzureSharedResource to emulate an Azure Storage Account. See the included unit tests for examples.
-
-After creation, you must call Provision() and then Start() on any rate limiters to begin processing. When you are done using a rate limiter, you can Stop() it.
+After creation, you must call Provision() and then Start() on any rate limiters to begin processing.

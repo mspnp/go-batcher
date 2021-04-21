@@ -52,7 +52,7 @@ type sharedResource struct {
 	partitions []*string
 }
 
-// This function should be called to create a new AzureSharedResource. The accountName and containerName refer to the details
+// This function should be called to create a new SharedResource. The accountName and containerName refer to the details
 // of an Azure Storage Account and container that the lease blobs can be created in. If multiple processes are sharing the same
 // capacity, they should all point to the same container. Commonly after calling NewSharedResource() you will chain some WithXXXX methods, for instance...
 // `NewSharedResource().WithMasterKey(key)`.

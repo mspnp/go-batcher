@@ -19,7 +19,7 @@ This code sample demonstrates the usage of the `go-batcher`.
     replace github.com/plasne/go-batcher => <local-path-for-go-batcher>
     ```
 
-5. Create an [Azure Storage Account](https://docs.microsoft.com/en-us/azure/storage/common/storage-account-create?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json&tabs=azure-cli) and a container. This will be the used for the AzureSharedResource rate limiter. Using [Azure CLI](https://docs.microsoft.com/en-gb/cli/azure/install-azure-cli) you can use the following commands:
+5. Create an [Azure Storage Account](https://docs.microsoft.com/en-us/azure/storage/common/storage-account-create?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json&tabs=azure-cli) and a container. This will be the used for the SharedResource rate limiter. Using [Azure CLI](https://docs.microsoft.com/en-gb/cli/azure/install-azure-cli) you can use the following commands:
 
     ```bash
     # Set your variables

@@ -84,7 +84,7 @@ func NewBatcherWithBuffer(maxBufferSize uint32) Batcher {
 	return r
 }
 
-// Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
+// Use SharedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
 // optional; the default behavior does not rate limit.
 func (r *batcher) WithRateLimiter(rl RateLimiter) Batcher {
 	r.phaseMutex.Lock()
