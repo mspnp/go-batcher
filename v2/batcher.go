@@ -447,10 +447,6 @@ func (r *batcher) Start(ctx context.Context) (err error) {
 	// process
 	go func() {
 
-		// shutdown
-		defer func() {
-		}()
-
 		// loop
 		for {
 			select {
