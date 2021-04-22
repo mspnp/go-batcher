@@ -568,24 +568,6 @@ func TestBatcher_Start_IsCallableOnlyOnce(t *testing.T) {
 	}
 }
 
-func TestBatcher_InitializationAfterStartCausesPanic(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	res := gobatcher.NewSharedResource().
-		WithReservedCapacity(100)
-	batcher := gobatcher.NewBatcher()
-	err := batcher.Start(ctx)
-	assert.NoError(t, err, "not expecting a start error")
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithRateLimiter(res) })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithFlushInterval(1 * time.Millisecond) })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithCapacityInterval(1000) })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithAuditInterval(1 * time.Millisecond) })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithMaxOperationTime(10 * time.Millisecond) })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithPauseTime(1 * time.Millisecond) })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithErrorOnFullBuffer() })
-	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithEmitBatch() })
-}
-
 func TestBatcher_Start_EnsureThatMixedOperationsAreBatchedOrNotAsAppropriate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -616,7 +598,7 @@ func TestBatcher_Start_EnsureThatMixedOperationsAreBatchedOrNotAsAppropriate(t *
 	err = batcher.Enqueue(op3)
 	assert.NoError(t, err, "not expecting an enqueue error")
 	err = batcher.Start(ctx)
-	assert.NoError(t, err, "not expecting an startup error")
+	assert.NoError(t, err, "not expecting a startup error")
 	wg.Wait()
 	assert.Equal(t, uint32(3), count, "expect 3 operations to be completed")
 }
@@ -637,9 +619,27 @@ func TestBatcher_Start_EnsureFullBatchesAreFlushed(t *testing.T) {
 		assert.NoError(t, err, "not expecting an enqueue error")
 	}
 	err := batcher.Start(ctx)
-	assert.NoError(t, err, "not expecting an startup error")
+	assert.NoError(t, err, "not expecting a startup error")
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, uint32(3), atomic.LoadUint32(&count), "expect 3 batches")
+}
+
+func TestBatcher_InitializationAfterStartCausesPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(100)
+	batcher := gobatcher.NewBatcher()
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithRateLimiter(res) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithFlushInterval(1 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithCapacityInterval(1000) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithAuditInterval(1 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithMaxOperationTime(10 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithPauseTime(1 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithErrorOnFullBuffer() })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithEmitBatch() })
 }
 
 func TestBatcher_Shutdown(t *testing.T) {
