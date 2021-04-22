@@ -20,6 +20,7 @@
   - [Cost savings](#cost-savings)
   - [Cost increase](#cost-increase)
 - [Determining cost](#determining-cost)
+- [Context](#context)
 - [Opportunities for improvement](#opportunities-for-improvement)
 
 ## Overview
@@ -289,6 +290,36 @@ A Batcher with a rate limiter depends on each operation having a cost. The follo
 - [Determine costs for operations in Cosmos](docs/cost-in-cosmos.md)
 
 - [Determine costs for operations in a datastore that is not rate limited](docs/cost-in-non-rate-limited.md)
+
+## Context
+
+When you Start() Batcher or a RateLimiter you must provide a context. If the context is ever "done" (cancelled, deadlined, etc.), the Batcher or RateLimiter is shutdown. Once it is shutdown it cannot be restarted.
+
+Generally, you want Batcher (and any associated RateLimiter) to run for the duration of your process. If that is true, you can simply use context.Background().
+
+However, if you wanted Batcher (and any associated RateLimiter) to explicitly shutdown when some work was done, you could do something like:
+
+```go
+func DoWork(workitems chan WorkItem) error {
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel() // when DoWork is done (ie. workitems is closed), cancel the context
+    batcher := gobatcher.NewBatcher()
+    watcher := gobatcher.NewWatcher(func(batch []gobatcher.Operation) {
+        // process the workitems in the batch
+    })
+    err := batcher.Start(ctx)
+    if err != nil {
+        return err
+    }
+    for workitem := range workitems
+        op := gobatcher.NewOperation(watcher, 100, workitem, true)
+        err := batcher.Enqueue(op)
+        if err != nil {
+            return err
+        }
+    }
+}
+```
 
 ## Opportunities for improvement
 
