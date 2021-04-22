@@ -568,6 +568,24 @@ func TestBatcher_Start_IsCallableOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestBatcher_InitializationAfterStartCausesPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(100)
+	batcher := gobatcher.NewBatcher()
+	err := batcher.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithRateLimiter(res) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithFlushInterval(1 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithCapacityInterval(1000) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithAuditInterval(1 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithMaxOperationTime(10 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithPauseTime(1 * time.Millisecond) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithErrorOnFullBuffer() })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { batcher.WithEmitBatch() })
+}
+
 func TestBatcher_Start_EnsureThatMixedOperationsAreBatchedOrNotAsAppropriate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
