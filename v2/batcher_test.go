@@ -16,7 +16,7 @@ import (
 )
 
 // NOTE: mock.AssertExpectations was not used because it iterates all private properties of the mocked object and sometimes
-// this is not threadsafe due to mutex locks.
+// this is not threadsafe due to mutex locks or atomic. https://github.com/stretchr/testify/issues/625
 
 func TestBatcher_Enqueue_IsAllowedBeforeStartup(t *testing.T) {
 	batcher := gobatcher.NewBatcher()
