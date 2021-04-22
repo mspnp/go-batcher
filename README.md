@@ -81,7 +81,7 @@ Batcher use cases are not limited to datastores. Consider the scenario where you
 
 - __Operation__: Operations are enqueued into the Batcher. An Operation has an associated "Watcher", a "cost", a designation of whether or not it can be batched, a counter for the number of times it has been "attempted", and a "payload" (which can be anything you want).
 
-- __SharedResource__: This is a rate limiter that allows you to reserve a fixed amount of capacity and then share a fixed amount of capacity across multiple processes. When shared capacity is set, an AzureBlobLeaseManager is used as the capacity lease management system.
+- __SharedResource__: This is the one included rate limiter (though you can write your own) that allows for reserving and/or sharing capacity across instances. When sharing capacity, you must provide a LeaseManager (such as AzureBlobLeaseManager) that is responsible for managing partitions and leases on those partitions.
 
 - __AzureBlobLeaseManager__: This is a Azure Blob Storage partition and lease management component that uses an Azure Storage Account. It is used by SharedResource so that capacity can be shared across multiple instances.
 
@@ -116,7 +116,7 @@ Some other terms will be used throughout...
 
 - __Rate Limiting__: You may optionally attach a rate limiter to Batcher that can restrict the Operations so they don't exceed a certain cost per second.
 
-- __Shared Capacity__: Batcher supports using a rate limiter. The provided rate limiter SharedResource allows for sharing capacity across multiple Instances. Sharing capacity in this way can reduce cost.
+- __Shared Capacity__: The provided rate limiter SharedResource allows for sharing capacity across multiple Instances. Sharing capacity in this way can reduce cost.
 
 - __Reserved Capacity__: SharedResource also supports a reserved capacity to improve latency. For instance, you might have 4 Instances that need to share 20K RU in a Cosmos database. You might give each 2K reserved capacity and share the remaining 14K RU. This gives each process low latency up to 2K RU but allows each process to request more.
 
