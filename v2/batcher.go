@@ -587,7 +587,7 @@ func (r *batcher) shutdown() {
 	defer r.phaseMutex.Unlock()
 
 	// clear the buffer
-	r.buffer.clear()
+	r.buffer.shutdown()
 
 	// update the phase
 	r.phase = phaseStopped

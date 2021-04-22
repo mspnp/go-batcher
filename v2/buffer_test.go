@@ -199,14 +199,16 @@ func TestBuffer_TopIsEmpty(t *testing.T) {
 	assert.Nil(t, buffer.top(), "expecting no head")
 }
 
-func TestBuffer_Clear(t *testing.T) {
+func TestBuffer_Shutdown(t *testing.T) {
 	var err error
 	buffer := newBuffer(10)
 	watcher := NewWatcher(func(batch []Operation) {})
 	op := NewOperation(watcher, 0, struct{}{}, false)
 	err = buffer.enqueue(op, false)
 	assert.Nil(t, err, "expecting no error on enqueue")
-	buffer.clear()
+	buffer.shutdown()
 	assert.Equal(t, uint32(0), buffer.size())
 	assert.Nil(t, buffer.top())
+	err = buffer.enqueue(op, false)
+	assert.Equal(t, BufferIsShutdown, err, "expecting an error when enqueue after shutdown")
 }
