@@ -385,6 +385,20 @@ func TestSharedResource_CannotBeStartedMoreThanOnce(t *testing.T) {
 	}
 }
 
+func TestSharedResource_InitializationAfterStartCausesPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	res := gobatcher.NewSharedResource().
+		WithReservedCapacity(1000)
+
+	err := res.Start(ctx)
+	assert.NoError(t, err, "not expecting a start error")
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { res.WithSharedCapacity(1000, nil) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { res.WithReservedCapacity(1000) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { res.WithFactor(10) })
+	assert.PanicsWithError(t, gobatcher.InitializationOnlyError.Error(), func() { res.WithMaxInterval(10) })
+}
+
 func TestSharedResource_StartAnnouncesStartingCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
