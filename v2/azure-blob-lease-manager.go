@@ -34,17 +34,6 @@ func NewAzureBlobLeaseManager(accountName, containerName, masterKey string) Leas
 	return mgr
 }
 
-func newMockAzureBlobLeaseManager(accountName, containerName, masterKey string, container azureContainer, blob azureBlob) LeaseManager {
-	mgr := &azureBlobLeaseManager{
-		accountName:   &accountName,
-		containerName: &containerName,
-		masterKey:     &masterKey,
-		container:     container,
-		blob:          blob,
-	}
-	return mgr
-}
-
 // FOR INTERNAL USE ONLY. Events raised by AzureBlobLeaseManager must be raised to an Eventer. Specifically the SharedResource it is associated with
 // will be used as the Eventer. This method is called in SharedResource.WithSharedCapacity().
 func (m *azureBlobLeaseManager) RaiseEventsTo(e Eventer) {
