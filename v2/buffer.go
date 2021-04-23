@@ -12,18 +12,19 @@ type ibuffer interface {
 	skip() Operation
 	remove() Operation
 	enqueue(Operation, bool) error
-	clear()
+	shutdown()
 }
 
 type buffer struct {
 	// WARNING: internal properties; only use the methods
-	lock    *sync.Mutex
-	notFull *sync.Cond
-	len     uint32
-	cap     uint32
-	head    *links
-	tail    *links
-	cursor  *links
+	lock       *sync.Mutex
+	notFull    *sync.Cond
+	len        uint32
+	cap        uint32
+	head       *links
+	tail       *links
+	cursor     *links
+	isShutdown bool
 }
 
 type links struct {
@@ -135,6 +136,10 @@ func (b *buffer) enqueue(op Operation, errorOnFull bool) error {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
+	if b.isShutdown {
+		return BufferIsShutdown
+	}
+
 	for b.len >= b.cap {
 		if errorOnFull {
 			return BufferFullError
@@ -161,12 +166,13 @@ func (b *buffer) enqueue(op Operation, errorOnFull bool) error {
 	return nil
 }
 
-// This clears the Buffer allowing all Operations to be garbage collected.
-func (b *buffer) clear() {
+// This clears the Buffer allowing all Operations to be garbage collected. Once shutdown, it cannot be used any longer
+func (b *buffer) shutdown() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	b.head = nil
 	b.tail = nil
 	b.cursor = nil
 	b.len = 0
+	b.isShutdown = true
 }

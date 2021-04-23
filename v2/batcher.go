@@ -447,10 +447,6 @@ func (r *batcher) Start(ctx context.Context) (err error) {
 	// process
 	go func() {
 
-		// shutdown
-		defer func() {
-		}()
-
 		// loop
 		for {
 			select {
@@ -591,7 +587,7 @@ func (r *batcher) shutdown() {
 	defer r.phaseMutex.Unlock()
 
 	// clear the buffer
-	r.buffer.clear()
+	r.buffer.shutdown()
 
 	// update the phase
 	r.phase = phaseStopped
