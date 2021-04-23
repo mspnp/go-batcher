@@ -11,41 +11,37 @@ import (
 )
 
 type azureBlobLeaseManager struct {
-	repeater
 
 	// configuration items that should not change after Provision()
+	eventer       Eventer
 	accountName   *string
 	masterKey     *string
 	containerName *string
 
 	// internal properties
-	container  AzureContainer
-	blob       AzureBlob
-	mocksInUse bool
+	container azureContainer
+	blob      azureBlob
 }
 
-func newAzureBlobLeaseManager(parent ieventer, accountName, containerName string) *azureBlobLeaseManager {
+// This method creates a new AzureBlobLeaseManager to allow the SharedResource to use Azure Blob Storage to manage leases across instances. You
+// must provide an Azure Storage accountName, containerName, and a masterKey.
+func NewAzureBlobLeaseManager(accountName, containerName, masterKey string) LeaseManager {
 	mgr := &azureBlobLeaseManager{
 		accountName:   &accountName,
 		containerName: &containerName,
+		masterKey:     &masterKey,
 	}
-	mgr.parent = parent
 	return mgr
 }
 
-func (m *azureBlobLeaseManager) withMocks(container azureContainer, blob azureBlob) *azureBlobLeaseManager {
-	m.container = container
-	m.blob = blob
-	m.mocksInUse = true
-	return m
+// FOR INTERNAL USE ONLY. Events raised by AzureBlobLeaseManager must be raised to an Eventer. Specifically the SharedResource it is associated with
+// will be used as the Eventer. This method is called in SharedResource.WithSharedCapacity().
+func (m *azureBlobLeaseManager) RaiseEventsTo(e Eventer) {
+	m.eventer = e
 }
 
-func (m *azureBlobLeaseManager) withMasterKey(val string) *azureBlobLeaseManager {
-	m.masterKey = &val
-	return m
-}
-
-func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
+// FOR INTERNAL USE ONLY. This is called by SharedResource when the Azure Blob Storage Container should be created or verified.
+func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 
 	// choose the appropriate credential
 	var credential azblob.Credential
@@ -54,8 +50,6 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 		if err != nil {
 			return
 		}
-	} else {
-		credential = azblob.NewAnonymousCredential()
 	}
 
 	// NOTE: managed identity or AAD tokens could be used this way; tested
@@ -81,7 +75,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeContainerAlreadyExists:
 				err = nil // this is a legit condition
-				m.emit(VerifiedContainerEvent, 0, ref, nil)
+				m.eventer.Emit(VerifiedContainerEvent, 0, ref, nil)
 			default:
 				return
 			}
@@ -89,7 +83,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 			return
 		}
 	} else {
-		m.emit(CreatedContainerEvent, 0, ref, nil)
+		m.eventer.Emit(CreatedContainerEvent, 0, ref, nil)
 	}
 
 	return
@@ -104,9 +98,8 @@ func (m *azureBlobLeaseManager) getBlob(index int) azureBlob {
 	}
 }
 
-func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int) (err error) {
-
-	// create a blob for each partition
+// FOR INTERNAL USE ONLY. This is called by SharedResource when the Azure Blob Storage blobs (partitions) should be created or verified.
+func (m *azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) {
 	for i := 0; i < count; i++ {
 		blob := m.getBlob(i)
 		var empty []byte
@@ -116,36 +109,27 @@ func (m *azureBlobLeaseManager) createPartitions(ctx context.Context, count int)
 				IfNoneMatch: "*",
 			},
 		}
-		_, err = blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil, azblob.ClientProvidedKeyOptions{})
+		_, err := blob.Upload(ctx, reader, azblob.BlobHTTPHeaders{}, nil, cond, azblob.AccessTierHot, nil, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
 			if serr, ok := err.(azblob.StorageError); ok {
 				switch serr.ServiceCode() {
 				case azblob.ServiceCodeBlobAlreadyExists, azblob.ServiceCodeLeaseIDMissing:
-					err = nil // these are legit conditions
-					m.emit(VerifiedBlobEvent, i, "", nil)
+					m.eventer.Emit(VerifiedBlobEvent, i, "", nil)
 				default:
-					return
+					m.eventer.Emit(ErrorEvent, 0, "creating partitions raised an error", serr)
 				}
 			} else {
-				return
+				m.eventer.Emit(ErrorEvent, 0, "creating partitions raised an error", err)
 			}
 		} else {
-			m.emit(CreatedBlobEvent, i, "", nil)
+			m.eventer.Emit(CreatedBlobEvent, i, "", nil)
 		}
 	}
-
-	return
 }
 
-func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, index uint32, secondsToLease uint32) (leaseTime time.Duration) {
-
-	// constrain the secondsToLease (Azure only supports 15-60 seconds)
-	switch {
-	case !m.mocksInUse && secondsToLease < 15:
-		secondsToLease = 15
-	case !m.mocksInUse && secondsToLease > 60:
-		secondsToLease = 60
-	}
+// FOR INTERNAL USE ONLY. This is called by SharedResource when it needs to lease partitions for capacity.
+func (m *azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
+	secondsToLease := 15
 
 	// attempt to allocate the partition
 	blob := m.getBlob(int(index))
@@ -155,14 +139,14 @@ func (m *azureBlobLeaseManager) leasePartition(ctx context.Context, id string, i
 			switch serr.ServiceCode() {
 			case azblob.ServiceCodeLeaseAlreadyPresent:
 				// you cannot allocate a lease that is already assigned; try again in a bit
-				m.emit(FailedEvent, int(index), "", nil)
+				m.eventer.Emit(FailedEvent, int(index), "", nil)
 				return
 			default:
-				m.emit(ErrorEvent, 0, err.Error(), nil)
+				m.eventer.Emit(ErrorEvent, 0, err.Error(), nil)
 				return
 			}
 		} else {
-			m.emit(ErrorEvent, 0, err.Error(), nil)
+			m.eventer.Emit(ErrorEvent, 0, err.Error(), nil)
 			return
 		}
 	}

@@ -6,7 +6,7 @@ Events are raised with a "name" (string), "val" (int), and "msg" (*string).
 
 The following events can be raised by Batcher...
 
-- __shutdown__: This is raised after Stop() is called on a Batcher instance.
+- __shutdown__: This is raised when the context provided to Start() is "done" (cancelled, deadlined, etc.).
 
 - __pause__: This is raised after Pause() is called on a Batcher instance. The val is the number of milliseconds that it was paused for.
 
@@ -24,19 +24,15 @@ The following events can be raised by Batcher...
 
 - __flush-done__: This is raised only when WithEmitFlush has been added to Batcher. It is raised at the FlushInterval when the flush is completed. There is no security concern with event, it is disabled by default because it raises every 100ms by default.
 
-## Events raised by ProvisionedResource and AzureSharedResource
+## Events raised by SharedResource
 
-The following events can be raised by ProvisionedResource and AzureSharedResource...
+The following events can be raised by SharedResource or its associated LeaseManager...
 
-- __shutdown__: This is raised after Stop() is called on a rate limiter instance.
+- __shutdown__: This is raised when the context provided to Start() is "done" (cancelled, deadlined, etc.).
 
 - __capacity__: This is raised anytime the Capacity changes. The val is the available capacity.
 
 - __batch__: This is raised only when WithEmitBatch has been added to Batcher and whenever a batch is raised to any Watcher. The val is the count of the operations in the batch. The metadata contains an array of all Operations in the batch. Enabling this event creates a potential security issue as it would allow any block of code with access to the Batcher to see Operations for Watchers the code didn't create.
-
-## Events raised by AzureSharedResource
-
-In addition, the following events can be raised by AzureSharedResource...
 
 - __failed__: This is raised if the rate limiter fails to procure capacity. This does not indicate an error condition, it is expected that attempts to procure additional capacity will have failures. The val is the index of the partition that was not obtained.
 
@@ -48,10 +44,16 @@ In addition, the following events can be raised by AzureSharedResource...
 
 - __error__: This is raised if there was some unexpected error condition, such as an authentication failure when attempting to allocate a partition.
 
-- __created-container__: The Azure Storage Account must exist, but the container can be created in Provision(). This event is raised if that happens. The msg is the fully qualified path to the container.
+- __provision-start__: If SharedCapacity is used, there will be a provisioning activity at Start() and whenever the SharedCapacity changes. This event is raised at the start of that provisioning activity. The provisioning activity may raise events such as those shown below by AzureBlobLeaseManager.
 
-- __verified-container__: During Provision(), if the container already exists, this event is raised. The msg is the fully qualified path to the container.
+- __provision-done__: This is raised at the end of provisioning activity after all other provisioning events are raised.
 
-- __created-blob__: During Provision(), if a zero-byte blob needs to be created for a partition, this event is raised. The val is the index of the partition created.
+### Events raised when using AzureBlobLeaseManager
 
-- __verified-blob__: During Provision(), if a zero-byte blob partition was found to exist, this event is raised. The val is the index of the partition verified.
+- __created-container__: This is raised if a container is created during a provisioning activity. The msg is the fully qualified path to the container.
+
+- __verified-container__: This is raised if a container was found to already exist during a provisioning activity. The msg is the fully qualified path to the container.
+
+- __created-blob__: This is raised if a zero-byte blob needs to be created for a partition. The val is the index of the partition created.
+
+- __verified-blob__: This is raised if a zero-byte blob partition was found to already exist. The val is the index of the partition verified.

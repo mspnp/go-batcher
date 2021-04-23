@@ -1,19 +1,20 @@
 package batcher
 
 import (
+	"context"
 	"sync"
 	"time"
 )
 
 const (
-	batcherPhaseUninitialized = iota
-	batcherPhaseStarted
-	batcherPhasePaused
-	batcherPhaseStopped
+	phaseUninitialized = iota
+	phaseStarted
+	phasePaused
+	phaseStopped
 )
 
 type Batcher interface {
-	ieventer
+	Eventer
 	WithRateLimiter(rl RateLimiter) Batcher
 	WithFlushInterval(val time.Duration) Batcher
 	WithCapacityInterval(val time.Duration) Batcher
@@ -31,12 +32,11 @@ type Batcher interface {
 	Inflight() uint32
 	OperationsInBuffer() uint32
 	NeedsCapacity() uint32
-	Start() (err error)
-	Stop()
+	Start(ctx context.Context) (err error)
 }
 
 type batcher struct {
-	eventer
+	EventerBase
 
 	// configuration items that should not change after Start()
 	ratelimiter          RateLimiter
@@ -61,8 +61,6 @@ type batcher struct {
 	// manage the phase
 	phaseMutex sync.Mutex
 	phase      int
-	shutdown   sync.WaitGroup
-	stop       chan bool
 
 	// target needs to be threadsafe and changes frequently
 	targetMutex sync.RWMutex
@@ -86,12 +84,12 @@ func NewBatcherWithBuffer(maxBufferSize uint32) Batcher {
 	return r
 }
 
-// Use AzureSharedResource or ProvisionedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
+// Use SharedResource as a rate limiter with Batcher to throttle the requests made against a datastore. This is
 // optional; the default behavior does not rate limit.
 func (r *batcher) WithRateLimiter(rl RateLimiter) Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.ratelimiter = rl
@@ -105,7 +103,7 @@ func (r *batcher) WithRateLimiter(rl RateLimiter) Batcher {
 func (r *batcher) WithFlushInterval(val time.Duration) Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.flushInterval = val
@@ -119,7 +117,7 @@ func (r *batcher) WithFlushInterval(val time.Duration) Batcher {
 func (r *batcher) WithCapacityInterval(val time.Duration) Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.capacityInterval = val
@@ -134,7 +132,7 @@ func (r *batcher) WithCapacityInterval(val time.Duration) Batcher {
 func (r *batcher) WithAuditInterval(val time.Duration) Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.auditInterval = val
@@ -147,7 +145,7 @@ func (r *batcher) WithAuditInterval(val time.Duration) Batcher {
 func (r *batcher) WithMaxOperationTime(val time.Duration) Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.maxOperationTime = val
@@ -160,7 +158,7 @@ func (r *batcher) WithMaxOperationTime(val time.Duration) Batcher {
 func (r *batcher) WithPauseTime(val time.Duration) Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.pauseTime = val
@@ -172,7 +170,7 @@ func (r *batcher) WithPauseTime(val time.Duration) Batcher {
 func (r *batcher) WithErrorOnFullBuffer() Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.errorOnFullBuffer = true
@@ -183,7 +181,7 @@ func (r *batcher) WithErrorOnFullBuffer() Batcher {
 func (r *batcher) WithEmitBatch() Batcher {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		panic(InitializationOnlyError)
 	}
 	r.emitBatch = true
@@ -268,7 +266,7 @@ func (r *batcher) Pause() {
 	// ensure pausing only happens when it is running
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseStarted {
+	if r.phase != phaseStarted {
 		// simply ignore an invalid pause
 		return
 	}
@@ -282,15 +280,15 @@ func (r *batcher) Pause() {
 	}
 
 	// switch to paused phase
-	r.phase = batcherPhasePaused
+	r.phase = phasePaused
 
 }
 
 func (r *batcher) resume() {
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase == batcherPhasePaused {
-		r.phase = batcherPhaseStarted
+	if r.phase == phasePaused {
+		r.phase = phaseStarted
 	}
 }
 
@@ -386,7 +384,7 @@ func (r *batcher) processBatch(watcher Watcher, batch []Operation) {
 
 	// raise event
 	if r.emitBatch {
-		r.emit(BatchEvent, len(batch), "", batch)
+		r.Emit(BatchEvent, len(batch), "", batch)
 	}
 
 	go func() {
@@ -428,19 +426,13 @@ func (r *batcher) processBatch(watcher Watcher, batch []Operation) {
 
 // Call this method to start the processing loop. The processing loop requests capacity at the CapacityInterval, organizes operations into
 // batches at the FlushInterval, and audits the capacity target at the AuditInterval.
-func (r *batcher) Start() (err error) {
+func (r *batcher) Start(ctx context.Context) (err error) {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase != batcherPhaseUninitialized {
+	if r.phase != phaseUninitialized {
 		err = ImproperOrderError
-		return
-	}
-
-	// ensure buffer was provisioned
-	if r.buffer == nil || r.buffer.max() == 0 {
-		err = BufferNotAllocated
 		return
 	}
 
@@ -452,37 +444,27 @@ func (r *batcher) Start() (err error) {
 	flushTimer := time.NewTicker(r.flushInterval)
 	auditTimer := time.NewTicker(r.auditInterval)
 
-	// prepare for shutdown
-	r.shutdown.Add(1)
-	r.stop = make(chan bool)
-
 	// process
 	go func() {
-
-		// shutdown
-		defer func() {
-			capacityTimer.Stop()
-			flushTimer.Stop()
-			auditTimer.Stop()
-			r.buffer.clear()
-			r.emit(ShutdownEvent, 0, "", nil)
-			r.shutdown.Done()
-		}()
 
 		// loop
 		for {
 			select {
 
-			case <-r.stop:
-				// no more writes; abort
+			case <-ctx.Done():
+				// shutdown when context is cancelled
+				capacityTimer.Stop()
+				flushTimer.Stop()
+				auditTimer.Stop()
+				r.shutdown()
 				return
 
 			case <-r.pause:
 				// pause; typically this is requested because there is too much pressure on the datastore
-				r.emit(PauseEvent, int(r.pauseTime.Milliseconds()), "", nil)
+				r.Emit(PauseEvent, int(r.pauseTime.Milliseconds()), "", nil)
 				time.Sleep(r.pauseTime)
 				r.resume()
-				r.emit(ResumeEvent, 0, "", nil)
+				r.Emit(ResumeEvent, 0, "", nil)
 
 			case <-auditTimer.C:
 				// ensure that if the buffer is empty and everything should have been flushed, that target is set to 0
@@ -491,16 +473,16 @@ func (r *batcher) Start() (err error) {
 					inflightIsZero := r.confirmInflightIsZero()
 					switch {
 					case !targetIsZero && !inflightIsZero:
-						r.emit(AuditFailEvent, 0, AuditMsgFailureOnTargetAndInflight, nil)
+						r.Emit(AuditFailEvent, 0, AuditMsgFailureOnTargetAndInflight, nil)
 					case !targetIsZero:
-						r.emit(AuditFailEvent, 0, AuditMsgFailureOnTarget, nil)
+						r.Emit(AuditFailEvent, 0, AuditMsgFailureOnTarget, nil)
 					case !inflightIsZero:
-						r.emit(AuditFailEvent, 0, AuditMsgFailureOnInflight, nil)
+						r.Emit(AuditFailEvent, 0, AuditMsgFailureOnInflight, nil)
 					default:
-						r.emit(AuditPassEvent, 0, "", nil)
+						r.Emit(AuditPassEvent, 0, "", nil)
 					}
 				} else {
-					r.emit(AuditSkipEvent, 0, "", nil)
+					r.Emit(AuditSkipEvent, 0, "", nil)
 				}
 
 			case <-capacityTimer.C:
@@ -508,7 +490,7 @@ func (r *batcher) Start() (err error) {
 				if r.ratelimiter != nil {
 					request := r.NeedsCapacity()
 					if r.emitRequest {
-						r.emit(RequestEvent, int(request), "", nil)
+						r.Emit(RequestEvent, int(request), "", nil)
 					}
 					r.ratelimiter.GiveMe(request)
 				}
@@ -519,7 +501,7 @@ func (r *batcher) Start() (err error) {
 			case <-r.flush:
 				// flush a percentage of the capacity (by default 10%)
 				if r.emitFlush {
-					r.emit(FlushStartEvent, 0, "", nil)
+					r.Emit(FlushStartEvent, 0, "", nil)
 				}
 
 				// determine the capacity
@@ -585,7 +567,7 @@ func (r *batcher) Start() (err error) {
 				}
 
 				if r.emitFlush {
-					r.emit(FlushDoneEvent, 0, "", nil)
+					r.Emit(FlushDoneEvent, 0, "", nil)
 				}
 			}
 		}
@@ -593,29 +575,24 @@ func (r *batcher) Start() (err error) {
 	}()
 
 	// end starting
-	r.phase = batcherPhaseStarted
+	r.phase = phaseStarted
 
 	return
 }
 
-// Call this method to stop the processing loop. You may not restart after stopping.
-func (r *batcher) Stop() {
+func (r *batcher) shutdown() {
 
 	// only allow one phase at a time
 	r.phaseMutex.Lock()
 	defer r.phaseMutex.Unlock()
-	if r.phase == batcherPhaseStopped {
-		// NOTE: there should be no need for callers to handle errors at Stop(), we will just ignore them
-		return
-	}
 
-	// signal the stop
-	if r.stop != nil {
-		close(r.stop)
-	}
-	r.shutdown.Wait()
+	// clear the buffer
+	r.buffer.shutdown()
 
 	// update the phase
-	r.phase = batcherPhaseStopped
+	r.phase = phaseStopped
+
+	// emit the shutdown event
+	r.Emit(ShutdownEvent, 0, "", nil)
 
 }

@@ -6,19 +6,19 @@ import (
 	"github.com/google/uuid"
 )
 
-type eventer struct {
+type EventerBase struct {
 	listenerMutex sync.RWMutex
 	listeners     map[uuid.UUID]func(event string, val int, msg string, metadata interface{})
 }
 
-type ieventer interface {
+type Eventer interface {
 	AddListener(fn func(event string, val int, msg string, metadata interface{})) uuid.UUID
 	RemoveListener(id uuid.UUID)
-	emit(event string, val int, msg string, metadata interface{})
+	Emit(event string, val int, msg string, metadata interface{})
 }
 
-// You can add a listener to catch events that are raised by Batcher or a rate limiter.
-func (r *eventer) AddListener(fn func(event string, val int, msg string, metadata interface{})) uuid.UUID {
+// You can add a listener to catch events that are raised by Batcher or a RateLimiter.
+func (r *EventerBase) AddListener(fn func(event string, val int, msg string, metadata interface{})) uuid.UUID {
 
 	// lock
 	r.listenerMutex.Lock()
@@ -36,8 +36,8 @@ func (r *eventer) AddListener(fn func(event string, val int, msg string, metadat
 	return id
 }
 
-// If you no longer need to catch events that are raised by Batcher or a rate limiter, you can use this method to remove the listener.
-func (r *eventer) RemoveListener(id uuid.UUID) {
+// If you no longer need to catch events that are raised by Batcher or a RateLimiter, you can use this method to remove the listener.
+func (r *EventerBase) RemoveListener(id uuid.UUID) {
 
 	// lock
 	r.listenerMutex.Lock()
@@ -48,7 +48,8 @@ func (r *eventer) RemoveListener(id uuid.UUID) {
 
 }
 
-func (r *eventer) emit(event string, val int, msg string, metadata interface{}) {
+// To raise an event, you may emit a unique string for the event along with val, msg, and metadata as appropriate to describe the event.
+func (r *EventerBase) Emit(event string, val int, msg string, metadata interface{}) {
 
 	// lock
 	r.listenerMutex.RLock()
