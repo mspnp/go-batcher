@@ -120,7 +120,7 @@ func TestBatcher_Enqueue_OperationsCannotBeAttemptedMoreThanXTimes(t *testing.T)
 				assert.Equal(t, gobatcher.TooManyAttemptsError, eerr, "expect the error to be too-many-attempts")
 				return
 			}
-			if attempts > 8 {
+			if attempts > 3 {
 				assert.FailNow(t, "the max-attempts governor didn't work, we have tried too many times")
 			}
 		}
