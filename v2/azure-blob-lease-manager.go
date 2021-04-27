@@ -34,13 +34,13 @@ func NewAzureBlobLeaseManager(accountName, containerName, masterKey string) Leas
 	return mgr
 }
 
-// FOR INTERNAL USE ONLY. Events raised by AzureBlobLeaseManager must be raised to an Eventer. Specifically the SharedResource it is associated with
+// Events raised by AzureBlobLeaseManager must be raised to an Eventer. Specifically the SharedResource it is associated with
 // will be used as the Eventer. This method is called in SharedResource.WithSharedCapacity().
 func (m *azureBlobLeaseManager) RaiseEventsTo(e Eventer) {
 	m.eventer = e
 }
 
-// FOR INTERNAL USE ONLY. This is called by SharedResource when the Azure Blob Storage Container should be created or verified.
+// This is called by SharedResource when the Azure Blob Storage Container should be created or verified.
 func (m *azureBlobLeaseManager) Provision(ctx context.Context) (err error) {
 
 	// choose the appropriate credential
@@ -98,7 +98,7 @@ func (m *azureBlobLeaseManager) getBlob(index int) azureBlob {
 	}
 }
 
-// FOR INTERNAL USE ONLY. This is called by SharedResource when the Azure Blob Storage blobs (partitions) should be created or verified.
+// This is called by SharedResource when the Azure Blob Storage blobs (partitions) should be created or verified.
 func (m *azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int) {
 	for i := 0; i < count; i++ {
 		blob := m.getBlob(i)
@@ -127,7 +127,7 @@ func (m *azureBlobLeaseManager) CreatePartitions(ctx context.Context, count int)
 	}
 }
 
-// FOR INTERNAL USE ONLY. This is called by SharedResource when it needs to lease partitions for capacity.
+// This is called by SharedResource when it needs to lease partitions for capacity.
 func (m *azureBlobLeaseManager) LeasePartition(ctx context.Context, id string, index uint32) (leaseTime time.Duration) {
 	secondsToLease := 15
 
