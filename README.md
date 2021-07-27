@@ -332,3 +332,11 @@ func DoWork(workitems chan WorkItem) error {
 - Currently the only LeaseManager is for Azure Blob Storage. It would be nice to add support for Zookeeper, Consul, etcd, redis/redsync, or similar.
 
 - There is currently no way to prioritize Operations so they are released before other Batches, but now that the Buffer is a double linked list, this would be possible.
+
+## Contributions
+
+Please see our [contributor guide](./CONTRIBUTING.md).
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact <opencode@microsoft.com> with any additional questions or comments.
+
+Microsoft Patterns & Practices, [Azure Architecture Center](https://aka.ms/architecture).
