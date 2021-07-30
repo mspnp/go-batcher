@@ -1,27 +1,7 @@
 
 # Batcher
 
-- [Overview](#overview)
-- [Use Cases](#use-cases)
-  - [Rate limiting on datastores](#rate-limiting-on-datastores)
-  - [Cost savings - Reserved vs Shared Capacity](#cost-savings---reserved-vs-shared-capacity)
-  - [Cost control](#cost-control)
-  - [Rate limiting on other resource targets](#rate-limiting-on-other-resource-targets)
-- [Batcher Components](#batcher-components)
-  - [Terminology](#terminology)
-- [Features](#features)
-- [Workflow](#workflow)
-- [Usage](#usage)
-  - [Batcher Configuration](#batcher-configuration)
-  - [Events](#events)
-  - [Unit Testing](#unit-testing)
-- [Rate limiting](#rate-limiting)
-  - [Scenarios](#scenarios)
-  - [Cost savings](#cost-savings)
-  - [Cost increase](#cost-increase)
-- [Determining cost](#determining-cost)
-- [Context](#context)
-- [Opportunities for improvement](#opportunities-for-improvement)
+This content supports the [_Rate Limiting_ Cloud Design Pattern](https://docs.microsoft.com/azure/architecture/patterns/rate-limiting-pattern) found in the Azure Architecture Center.
 
 ## Overview
 
