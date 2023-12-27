@@ -56,7 +56,7 @@ func (m *azureBlobLeaseManager) provision(ctx context.Context) (err error) {
 		credential = azblob.NewAnonymousCredential()
 	}
 
-	// NOTE: managed identity or AAD tokens could be used this way; tested
+	// NOTE: managed identity or Microsoft Entra ID access tokens could be used this way; tested
 	//credential := azblob.NewTokenCredential("-access-token-goes-here-", nil)
 
 	// create pipeline and container reference
