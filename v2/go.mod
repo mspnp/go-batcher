@@ -7,5 +7,5 @@ require (
 	github.com/google/uuid v1.2.0
 	github.com/plasne/go-batcher/v2 v2.0.0-20210728174735-56c7e4a2309e
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/net v0.23.0 // indirect
 )
