@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"testing"
 	"time"
 
-	"github.com/Azure/azure-storage-blob-go/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/lease"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -19,28 +22,28 @@ type mockBlob struct {
 	mock.Mock
 }
 
-func (b *mockBlob) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap, clientKeyOpts azblob.ClientProvidedKeyOptions) (*azblob.BlockBlobUploadResponse, error) {
-	args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags, clientKeyOpts)
-	return nil, args.Error(1)
+func (b *mockBlob) Upload(ctx context.Context, body io.ReadSeekCloser, o *blockblob.UploadOptions) (blockblob.UploadResponse, error) {
+	args := b.Called(ctx, body, o)
+	return blockblob.UploadResponse{}, args.Error(1)
 }
 
-func (b *mockBlob) AcquireLease(ctx context.Context, proposedId string, duration int32, conditions azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error) {
-	args := b.Called(ctx, proposedId, duration, conditions)
-	return nil, args.Error(1)
+func (b *mockBlob) AcquireLease(ctx context.Context, proposedID string, duration int32, o *lease.BlobAcquireOptions) (lease.BlobAcquireResponse, error) {
+	args := b.Called(ctx, proposedID, duration, o)
+	return lease.BlobAcquireResponse{}, args.Error(1)
 }
 
 type mockContainer struct {
 	mock.Mock
 }
 
-func (c *mockContainer) Create(ctx context.Context, metadata azblob.Metadata, publicAccessType azblob.PublicAccessType) (*azblob.ContainerCreateResponse, error) {
-	args := c.Called(ctx, metadata, publicAccessType)
-	return nil, args.Error(1)
+func (c *mockContainer) Create(ctx context.Context, o *container.CreateOptions) (container.CreateResponse, error) {
+	args := c.Called(ctx, o)
+	return container.CreateResponse{}, args.Error(1)
 }
 
-func (c *mockContainer) NewBlockBlobURL(url string) azblob.BlockBlobURL {
-	_ = c.Called(url)
-	return azblob.BlockBlobURL{}
+func (c *mockContainer) NewBlockBlobClient(blobName string) azureBlob {
+	_ = c.Called(blobName)
+	return nil
 }
 
 type mockEventer struct {
@@ -60,28 +63,11 @@ func (sr *mockEventer) Emit(event string, val int, msg string, metadata interfac
 	sr.Called(event, val, msg, metadata)
 }
 
-type StorageError struct {
-	serviceCode azblob.ServiceCodeType
-}
-
-func (e StorageError) ServiceCode() azblob.ServiceCodeType {
-	return e.serviceCode
-}
-
-func (e StorageError) Error() string {
-	return "this is a mock error"
-}
-
-func (e StorageError) Timeout() bool {
-	return false
-}
-
-func (e StorageError) Temporary() bool {
-	return false
-}
-
-func (e StorageError) Response() *http.Response {
-	return nil
+// mockStorageError builds an error that mimics the *azcore.ResponseError the Track 2 Azure SDK
+// returns for a given blob storage error code, so the bloberror.HasCode(...) checks in the
+// production code can be exercised without a live storage account.
+func mockStorageError(code bloberror.Code) error {
+	return &azcore.ResponseError{ErrorCode: string(code)}
 }
 
 func TestAzureBlobLeaseManager_Provision_ContainerIsCreated(t *testing.T) {
@@ -90,7 +76,7 @@ func TestAzureBlobLeaseManager_Provision_ContainerIsCreated(t *testing.T) {
 	e := &mockEventer{}
 	e.On("Emit", CreatedContainerEvent, mock.Anything, "https://accountName.blob.core.windows.net/containerName", mock.Anything)
 	container := &mockContainer{}
-	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil).Once()
+	container.On("Create", mock.Anything, mock.Anything).Return(nil, nil).Once()
 	accountName := "accountName"
 	containerName := "containerName"
 	mgr := &azureBlobLeaseManager{
@@ -111,8 +97,8 @@ func TestAzureBlobLeaseManager_Provision_ContainerIsVerified(t *testing.T) {
 	e := &mockEventer{}
 	e.On("Emit", VerifiedContainerEvent, mock.Anything, "https://accountName.blob.core.windows.net/containerName", mock.Anything)
 	container := &mockContainer{}
-	var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeContainerAlreadyExists}
-	container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, serr).Once()
+	serr := mockStorageError(bloberror.ContainerAlreadyExists)
+	container.On("Create", mock.Anything, mock.Anything).Return(nil, serr).Once()
 	accountName := "accountName"
 	containerName := "containerName"
 	mgr := &azureBlobLeaseManager{
@@ -131,7 +117,7 @@ func TestAzureBlobLeaseManager_Provision_Errors(t *testing.T) {
 	testCases := map[string]struct {
 		err error
 	}{
-		"unknown":     {err: StorageError{serviceCode: azblob.ServiceCodeAccountIsDisabled}},
+		"unknown":     {err: mockStorageError(bloberror.AccountIsDisabled)},
 		"non-storage": {err: errors.New("non-storage error")},
 	}
 	for testName, testCase := range testCases {
@@ -139,7 +125,7 @@ func TestAzureBlobLeaseManager_Provision_Errors(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			container := &mockContainer{}
-			container.On("Create", mock.Anything, mock.Anything, mock.Anything).Return(nil, testCase.err)
+			container.On("Create", mock.Anything, mock.Anything).Return(nil, testCase.err)
 			accountName := "accountName"
 			containerName := "containerName"
 			mgr := &azureBlobLeaseManager{
@@ -188,7 +174,7 @@ func TestAzureBlobLeaseManager_CreatePartitions_CorrectNumberCreated(t *testing.
 	e := &mockEventer{}
 	e.On("Emit", CreatedBlobEvent, mock.Anything, mock.Anything, mock.Anything)
 	blob := &mockBlob{}
-	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil).Times(5)
 	mgr := &azureBlobLeaseManager{
 		blob: blob,
@@ -200,19 +186,19 @@ func TestAzureBlobLeaseManager_CreatePartitions_CorrectNumberCreated(t *testing.
 }
 
 func TestAzureBlobLeaseManager_CreatePartitions_BlobIsVerified(t *testing.T) {
-	testCases := map[string]azblob.StorageError{
-		"exists": StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists},
-		"leased": StorageError{serviceCode: azblob.ServiceCodeLeaseIDMissing},
+	testCases := map[string]bloberror.Code{
+		"exists": bloberror.BlobAlreadyExists,
+		"leased": bloberror.LeaseIDMissing,
 	}
-	for testName, serr := range testCases {
+	for testName, code := range testCases {
 		t.Run(testName, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			e := &mockEventer{}
 			e.On("Emit", VerifiedBlobEvent, mock.Anything, mock.Anything, mock.Anything)
 			blob := &mockBlob{}
-			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-				Return(nil, serr).Once()
+			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, mockStorageError(code)).Once()
 			mgr := &azureBlobLeaseManager{
 				blob: blob,
 			}
@@ -226,7 +212,7 @@ func TestAzureBlobLeaseManager_CreatePartitions_BlobIsVerified(t *testing.T) {
 
 func TestAzureBlobLeaseManager_CreatePartitions_BlobErrors(t *testing.T) {
 	testCases := map[string]error{
-		"unknown":     StorageError{serviceCode: azblob.ServiceCodeAuthenticationFailed},
+		"unknown":     mockStorageError(bloberror.AuthenticationFailed),
 		"non-storage": errors.New("non-storage error"),
 	}
 	for testName, serr := range testCases {
@@ -236,7 +222,7 @@ func TestAzureBlobLeaseManager_CreatePartitions_BlobErrors(t *testing.T) {
 			e := &mockEventer{}
 			e.On("Emit", ErrorEvent, mock.Anything, mock.Anything, serr)
 			blob := &mockBlob{}
-			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
 				Return(nil, serr).Once()
 			mgr := &azureBlobLeaseManager{
 				blob: blob,
@@ -267,8 +253,8 @@ func TestAzureBlobLeaseManager_LeasePartition_Failures(t *testing.T) {
 		event string
 		err   error
 	}{
-		"failed to obtain lease": {event: FailedEvent, err: StorageError{serviceCode: azblob.ServiceCodeLeaseAlreadyPresent}},
-		"unknown":                {event: ErrorEvent, err: StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists}},
+		"failed to obtain lease": {event: FailedEvent, err: mockStorageError(bloberror.LeaseAlreadyPresent)},
+		"unknown":                {event: ErrorEvent, err: mockStorageError(bloberror.BlobAlreadyExists)},
 		"non-storage":            {event: ErrorEvent, err: fmt.Errorf("unknown mocked error")},
 	}
 	for testName, testCase := range testCases {
