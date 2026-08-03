@@ -130,13 +130,20 @@ After creation, you must call Provision() and then Start() on any rate limiters 
 Creating an AzureBlobLeaseManager might look like this...
 
 ```go
-leaseManager := gobatcher.NewAzureBlobLeaseManager(accountName, containerName, masterKey)
+leaseManager := gobatcher.NewAzureBlobLeaseManager(accountName, containerName)
 ```
 
 __accountName__ [REQUIRED]: The account name of the Azure Storage Account that will host the zero-byte blobs that serve as partitions for capacity.
 
 __containerName__ [REQUIRED]: The container name that will host the zero-byte blobs that serve as partitions for capacity.
 
-__masterKey__ [REQUIRED]: There needs to be some way to authenticate access to the Azure Storage Account, right now only master keys are supported.
+By default, the AzureBlobLeaseManager authenticates to the Azure Storage Account using Microsoft Entra ID via `azidentity.NewDefaultAzureCredential()`, which supports Managed Identity, Azure CLI, environment/workload identity, and other credential sources, and is the recommended approach for production use. If you need to authenticate with a Storage Account key instead (a secondary/legacy option), chain `.WithMasterKey(masterKey)`:
+
+```go
+leaseManager := gobatcher.NewAzureBlobLeaseManager(accountName, containerName).
+    WithMasterKey(masterKey)
+```
+
+__masterKey__ [OPTIONAL]: A Storage Account access key. Only needed if you are not using Microsoft Entra ID / Managed Identity to authenticate.
 
 After creation, you will provide the leaseManager as a parameter to SharedResource.WithSharedCapacity().
