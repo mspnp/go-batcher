@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	gobatcher "github.com/plasne/go-batcher/v2"
+	gobatcher "github.com/mspnp/go-batcher/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

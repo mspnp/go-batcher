@@ -4,80 +4,66 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Azure/azure-storage-blob-go/azblob"
-	gobatcher "github.com/plasne/go-batcher"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/lease"
+	gobatcher "github.com/mspnp/go-batcher"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-type blockBlobURLMock struct {
+type blockBlobMock struct {
 	mock.Mock
 }
 
-func (b *blockBlobURLMock) Upload(ctx context.Context, reader io.ReadSeeker, headers azblob.BlobHTTPHeaders, metadata azblob.Metadata, conditions azblob.BlobAccessConditions, accessTier azblob.AccessTierType, tags azblob.BlobTagsMap, clientKeyOpts azblob.ClientProvidedKeyOptions) (*azblob.BlockBlobUploadResponse, error) {
-	args := b.Called(ctx, reader, headers, metadata, conditions, accessTier, tags, clientKeyOpts)
-	return nil, args.Error(1)
+func (b *blockBlobMock) Upload(ctx context.Context, body io.ReadSeekCloser, o *blockblob.UploadOptions) (blockblob.UploadResponse, error) {
+	args := b.Called(ctx, body, o)
+	return blockblob.UploadResponse{}, args.Error(1)
 }
 
-func (b *blockBlobURLMock) AcquireLease(ctx context.Context, proposedId string, duration int32, conditions azblob.ModifiedAccessConditions) (*azblob.BlobAcquireLeaseResponse, error) {
-	args := b.Called(ctx, proposedId, duration, conditions)
-	return nil, args.Error(1)
+func (b *blockBlobMock) AcquireLease(ctx context.Context, proposedID string, duration int32, o *lease.BlobAcquireOptions) (lease.BlobAcquireResponse, error) {
+	args := b.Called(ctx, proposedID, duration, o)
+	return lease.BlobAcquireResponse{}, args.Error(1)
 }
 
-type containerURLMock struct {
+type containerMock struct {
 	mock.Mock
 }
 
-func (c *containerURLMock) Create(ctx context.Context, metadata azblob.Metadata, publicAccessType azblob.PublicAccessType) (*azblob.ContainerCreateResponse, error) {
-	args := c.Called(ctx, metadata, publicAccessType)
-	return nil, args.Error(1)
+func (c *containerMock) Create(ctx context.Context, o *container.CreateOptions) (container.CreateResponse, error) {
+	args := c.Called(ctx, o)
+	return container.CreateResponse{}, args.Error(1)
 }
 
-func (c *containerURLMock) NewBlockBlobURL(url string) azblob.BlockBlobURL {
-	_ = c.Called(url)
-	return azblob.BlockBlobURL{}
-}
-
-type StorageError struct {
-	serviceCode azblob.ServiceCodeType
-}
-
-func (e StorageError) ServiceCode() azblob.ServiceCodeType {
-	return e.serviceCode
-}
-
-func (e StorageError) Error() string {
-	return "this is a mock error"
-}
-
-func (e StorageError) Timeout() bool {
-	return false
-}
-
-func (e StorageError) Temporary() bool {
-	return false
-}
-
-func (e StorageError) Response() *http.Response {
+func (c *containerMock) NewBlockBlobClient(blobName string) gobatcher.IAzureBlob {
+	_ = c.Called(blobName)
 	return nil
 }
 
-func getMocks() (*containerURLMock, *blockBlobURLMock) {
+// mockStorageError builds an error that mimics the *azcore.ResponseError the Track 2 Azure SDK
+// returns for a given blob storage error code, so the bloberror.HasCode(...) checks in the
+// production code can be exercised without a live storage account.
+func mockStorageError(code bloberror.Code) error {
+	return &azcore.ResponseError{ErrorCode: string(code)}
+}
+
+func getMocks() (*containerMock, *blockBlobMock) {
 
 	// build container
-	container := new(containerURLMock)
-	container.On("Create", mock.Anything, mock.Anything, mock.Anything).
+	container := new(containerMock)
+	container.On("Create", mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	// build blob
-	blob := new(blockBlobURLMock)
-	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+	blob := new(blockBlobMock)
+	blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
 	blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
@@ -204,9 +190,9 @@ func TestProvision(t *testing.T) {
 	})
 
 	t.Run("container can be verified", func(t *testing.T) {
-		var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeContainerAlreadyExists}
-		container := new(containerURLMock)
-		container.On("Create", mock.Anything, mock.Anything, mock.Anything).
+		serr := mockStorageError(bloberror.ContainerAlreadyExists)
+		container := new(containerMock)
+		container.On("Create", mock.Anything, mock.Anything).
 			Return(nil, serr)
 		_, blob := getMocks()
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
@@ -226,8 +212,8 @@ func TestProvision(t *testing.T) {
 
 	t.Run("unknown container error cascades", func(t *testing.T) {
 		unknown := fmt.Errorf("unknown mocked error")
-		container := new(containerURLMock)
-		container.On("Create", mock.Anything, mock.Anything, mock.Anything).
+		container := new(containerMock)
+		container.On("Create", mock.Anything, mock.Anything).
 			Return(nil, unknown)
 		_, blob := getMocks()
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
@@ -238,9 +224,9 @@ func TestProvision(t *testing.T) {
 	})
 
 	t.Run("unrelated container storage error cascades", func(t *testing.T) {
-		var serr azblob.StorageError = StorageError{serviceCode: azblob.ServiceCodeAppendPositionConditionNotMet}
-		container := new(containerURLMock)
-		container.On("Create", mock.Anything, mock.Anything, mock.Anything).
+		serr := mockStorageError(bloberror.AppendPositionConditionNotMet)
+		container := new(containerMock)
+		container.On("Create", mock.Anything, mock.Anything).
 			Return(nil, serr)
 		_, blob := getMocks()
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
@@ -266,16 +252,16 @@ func TestProvision(t *testing.T) {
 		assert.Equal(t, 10, created, "expecting a creation event per partition")
 	})
 
-	blobErrors := map[string]azblob.StorageError{
-		"blob can be verified because it exists":    StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists},
-		"blob can be verified because it is leased": StorageError{serviceCode: azblob.ServiceCodeLeaseIDMissing},
+	blobErrors := map[string]bloberror.Code{
+		"blob can be verified because it exists":    bloberror.BlobAlreadyExists,
+		"blob can be verified because it is leased": bloberror.LeaseIDMissing,
 	}
-	for testName, serr := range blobErrors {
+	for testName, code := range blobErrors {
 		t.Run(testName, func(t *testing.T) {
 			container, _ := getMocks()
-			blob := new(blockBlobURLMock)
-			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-				Return(nil, serr)
+			blob := new(blockBlobMock)
+			blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, mockStorageError(code))
 			res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
 				WithMocks(container, blob).
 				WithFactor(1000)
@@ -295,8 +281,8 @@ func TestProvision(t *testing.T) {
 	t.Run("unknown blob error cascades", func(t *testing.T) {
 		unknown := fmt.Errorf("unknown mocked error")
 		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		blob := new(blockBlobMock)
+		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
 			Return(nil, unknown)
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
 			WithMocks(container, blob).
@@ -306,10 +292,10 @@ func TestProvision(t *testing.T) {
 	})
 
 	t.Run("unrelated blob storage error cascades", func(t *testing.T) {
-		serr := StorageError{serviceCode: azblob.ServiceCodeBlobArchived}
+		serr := mockStorageError(bloberror.BlobArchived)
 		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		blob := new(blockBlobMock)
+		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
 			Return(nil, serr)
 		res := gobatcher.NewAzureSharedResource("accountName", "containerName", 10000).
 			WithMocks(container, blob).
@@ -592,12 +578,12 @@ func TestAzureSRStart(t *testing.T) {
 	})
 
 	t.Run("start can lease, fail, and handle errors", func(t *testing.T) {
-		serr := StorageError{serviceCode: azblob.ServiceCodeLeaseAlreadyPresent}
+		serr := mockStorageError(bloberror.LeaseAlreadyPresent)
 		unknown := fmt.Errorf("unknown mocked error")
-		unrelated := StorageError{serviceCode: azblob.ServiceCodeBlobAlreadyExists}
+		unrelated := mockStorageError(bloberror.BlobAlreadyExists)
 		container, _ := getMocks()
-		blob := new(blockBlobURLMock)
-		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		blob := new(blockBlobMock)
+		blob.On("Upload", mock.Anything, mock.Anything, mock.Anything).
 			Return(nil, nil)
 		blob.On("AcquireLease", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(nil, unknown).

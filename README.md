@@ -135,14 +135,17 @@ This code sample shows the general usage...
 
 ```go
 import (
-    gobatcher "github.com/plasne/go-batcher"
+    gobatcher "github.com/mspnp/go-batcher/v2"
 )
 
 func main() {
     ctx := context.Background()
 
     // start getting shared resource capacity
-    leaseMgr := gobatcher.NewAzureBlobLeaseManager(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, AZBLOB_KEY)
+    // By default, the lease manager authenticates to the Azure Storage Account via Microsoft Entra ID
+    // (azidentity.DefaultAzureCredential), which supports Managed Identity and is recommended for
+    // production use. Call .WithMasterKey(AZBLOB_KEY) only if you need the legacy shared-key path.
+    leaseMgr := gobatcher.NewAzureBlobLeaseManager(AZBLOB_ACCOUNT, AZBLOB_CONTAINER)
     azresource := gobatcher.NewSharedResource().
         WithSharedCapacity(uint32(CAPACITY), leaseMgr).
         WithFactor(1000)

@@ -1,14 +1,29 @@
 module github.com/mspnp/go-batcher
 
-go 1.16
+go 1.25.0
+
+toolchain go1.25.12
 
 require (
-	github.com/Azure/azure-storage-blob-go v0.13.0
-	github.com/Azure/go-autorest/autorest/adal v0.9.13 // indirect
-	github.com/google/uuid v1.2.0
-	github.com/plasne/go-batcher v1.8.0
-	github.com/stretchr/objx v0.3.0 // indirect
-	github.com/stretchr/testify v1.7.0
-	golang.org/x/net v0.17.0 // indirect
-	gopkg.in/yaml.v3 v3.0.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0
+	github.com/google/uuid v1.6.0
+	github.com/stretchr/testify v1.11.1
+)
+
+require (
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/stretchr/objx v0.5.3 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

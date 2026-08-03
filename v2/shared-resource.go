@@ -55,7 +55,9 @@ type sharedResource struct {
 // This function should be called to create a new SharedResource. The accountName and containerName refer to the details
 // of an Azure Storage Account and container that the lease blobs can be created in. If multiple processes are sharing the same
 // capacity, they should all point to the same container. Commonly after calling NewSharedResource() you will chain some WithXXXX methods, for instance...
-// `NewSharedResource().WithMasterKey(key)`.
+// `NewSharedResource().WithSharedCapacity(1000, NewAzureBlobLeaseManager(account, container))`. By default, the lease manager
+// authenticates with Microsoft Entra ID via DefaultAzureCredential (supporting Managed Identity); call
+// `.WithMasterKey(key)` on the lease manager for the legacy Storage Account key credential path.
 func NewSharedResource() SharedResource {
 	res := &sharedResource{}
 	return res

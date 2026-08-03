@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	gobatcher "github.com/plasne/go-batcher/v2"
+	gobatcher "github.com/mspnp/go-batcher/v2"
 	goconfig "github.com/plasne/go-config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -64,11 +64,18 @@ func main() {
 	PORT := goconfig.AsInt().TrySetValue(flagPort).TrySetByEnv("PORT").DefaultTo(8080).Print().Value()
 	CAPACITY := goconfig.AsInt().SetEmpty(-1).TrySetValue(flagCapacity).TrySetByEnv("CAPACITY").DefaultTo(10000).Print().Value()
 	AZBLOB_ACCOUNT := goconfig.AsString().TrySetByEnv("AZBLOB_ACCOUNT").Print().Require().Value()
-	AZBLOB_KEY := goconfig.AsString().TrySetByEnv("AZBLOB_KEY").PrintMasked().Require().Value()
+	AZBLOB_KEY := goconfig.AsString().TrySetByEnv("AZBLOB_KEY").PrintMasked().Value()
 	AZBLOB_CONTAINER := goconfig.AsString().TrySetByEnv("AZBLOB_CONTAINER").Print().Require().Value()
 
 	// start getting shared resource capacity
-	leaseMgr := gobatcher.NewAzureBlobLeaseManager(AZBLOB_ACCOUNT, AZBLOB_CONTAINER, AZBLOB_KEY)
+	// AZBLOB_KEY is optional: when not provided, the lease manager authenticates via
+	// azidentity.DefaultAzureCredential (Managed Identity, Azure CLI, etc.), which is the
+	// recommended credential for production use. Set AZBLOB_KEY only if you need the
+	// legacy Storage Account shared-key credential path.
+	leaseMgr := gobatcher.NewAzureBlobLeaseManager(AZBLOB_ACCOUNT, AZBLOB_CONTAINER)
+	if AZBLOB_KEY != "" {
+		leaseMgr = leaseMgr.WithMasterKey(AZBLOB_KEY)
+	}
 	azresource := gobatcher.NewSharedResource().
 		WithSharedCapacity(uint32(CAPACITY), leaseMgr).
 		WithFactor(1000)

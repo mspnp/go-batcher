@@ -45,8 +45,10 @@ type AzureSharedResource struct {
 // of an Azure Storage Account and container that the lease blobs can be created in. If multiple processes are sharing the same
 // capacity, they should all point to the same container. The sharedCapacity parameter is the maximum shared capacity for the
 // resource. For example, if you provision a Cosmos database with 20k RU, you might set sharedCapacity to 20,000. Capacity is renewed
-// every 1 second. Commonly after calling NewAzureSharedResource() you will chain some WithXXXX methods, for instance...
-// `NewAzureSharedResource().WithMasterKey(key)`.
+// every 1 second. By default, the Azure Storage Account is accessed via Microsoft Entra ID (azidentity.DefaultAzureCredential,
+// which supports Managed Identity); commonly after calling NewAzureSharedResource() you will chain some WithXXXX methods, for
+// instance... `NewAzureSharedResource(account, container, capacity).WithFactor(1000)`. Call WithMasterKey() only if you need
+// the secondary/legacy shared-key credential path instead.
 func NewAzureSharedResource(accountName, containerName string, sharedCapacity uint32) *AzureSharedResource {
 	res := &AzureSharedResource{
 		sharedCapacity: sharedCapacity,
@@ -64,8 +66,11 @@ func (r *AzureSharedResource) WithMocks(container IAzureContainer, blob IAzureBl
 	return r
 }
 
-// You must provide credentials for the AzureSharedResource to access the Azure Storage Account. Currently, the only supported method
-// is to provide a read/write key via WithMasterKey(). This method is required unless you calling WithMocks().
+// By default, AzureSharedResource authenticates to the Azure Storage Account using Microsoft Entra ID via
+// azidentity.NewDefaultAzureCredential(), which supports Managed Identity and is the recommended credential
+// for production use. WithMasterKey() is available as a secondary/legacy option for environments that must
+// use a Storage Account read/write key instead. Do not call this method unless you specifically need shared-key
+// authentication or are calling WithMocks().
 func (r *AzureSharedResource) WithMasterKey(val string) *AzureSharedResource {
 	if ablm, ok := r.leaseManager.(*azureBlobLeaseManager); ok {
 		ablm.withMasterKey(val)
